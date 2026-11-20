@@ -1,6 +1,6 @@
 {
   "name": "ed-journal-tool",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Monitors Elite Dangerous journal files, stores them in SQLite and serves stats through an API and React dashboard.",
   "type": "module",
   "private": true,
@@ -9,7 +9,7 @@
     "ed-journal-monitor": "src/index.mjs"
   },
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=26.0.0"
   },
   "scripts": {
     "start": "node src/index.mjs",
@@ -17,11 +17,28 @@
     "client:install": "npm install --prefix client",
     "client:dev": "npm run dev --prefix client",
     "client:build": "npm run build --prefix client",
-    "build": "npm run client:build"
+    "build": "npm run client:build",
+    "dist": "npm run client:build && npm run dist:bundle && npm run dist:package",
+    "dist:bundle": "node scripts/bundle-server.mjs",
+    "dist:package": "node scripts/package-executables.mjs"
   },
   "dependencies": {
     "chokidar": "^5.0.0",
     "express": "^5.3.0",
     "yargs": "^18.2.0"
+  },
+  "devDependencies": {
+    "@yao-pkg/pkg": "^6.25.0",
+    "esbuild": "^0.28.2"
+  },
+  "pkg": {
+    "assets": [
+      "package.json",
+      "client/dist/**/*"
+    ],
+    "targets": [
+      "node26-linux-x64",
+      "node26-win-x64"
+    ]
   }
 }

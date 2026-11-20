@@ -11,6 +11,7 @@ npm install
 npm run client:install
 npm run build          # builds the dashboard into client/dist
 npm start              # or: node src/index.mjs --help
+npm run dist           # builds dist/ed-journal-tool-<version>-linux and -win.exe (client included)
 ```
 
 Then open http://localhost:4267.
@@ -23,7 +24,7 @@ Then open http://localhost:4267.
 | `-b, --bind` | `0.0.0.0` | Host/IP to bind (all interfaces by default) |
 | `-d, --debug` | `false` | Verbose logging |
 | `-j, --journaldir` | `%USERPROFILE%/Saved Games/Frontier Developments/Elite Dangerous` | Journal directory |
-| `--database` | `data/journals.db` | SQLite database path |
+| `--database` | `%LOCALAPPDATA%/edjt/journals.db` (`~/.local/share/edjt` on Linux) | SQLite database path |
 | `--rebuild-stats` | `false` | Clear and rebuild all stats from stored entries |
 
 ### Client development

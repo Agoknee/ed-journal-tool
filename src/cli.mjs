@@ -1,16 +1,24 @@
+import { readFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 
+/** In the standalone executable, this is the read-only bundled copy holding package.json and client/dist. */
 const projectRootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+/** App data lives in %LOCALAPPDATA%edjt (~/.local/share/edjt where LOCALAPPDATA isn't set, e.g. Linux). */
+const dataDirectoryPath = path.join(process.env.LOCALAPPDATA ?? path.join(os.homedir(), '.local', 'share'), 'edjt');
+
+const { version: appVersion } = JSON.parse(readFileSync(path.join(projectRootPath, 'package.json'), 'utf8'));
 
 const defaultJournalDirectory = path.join(
   process.env.USERPROFILE ?? process.env.HOME ?? '.',
   'Saved Games/Frontier Developments/Elite Dangerous',
 );
 
-const defaultDatabasePath = path.join(projectRootPath, 'data', 'journals.db');
+const defaultDatabasePath = path.join(dataDirectoryPath, 'journals.db');
 
 /**
  * Parses command-line options.
@@ -62,7 +70,7 @@ export function parseCommandLineOptions(argv = process.argv) {
     })
     .help()
     .alias('help', 'h')
-    .version()
+    .version(appVersion)
     .alias('version', 'v')
     .strict()
     .parseSync();

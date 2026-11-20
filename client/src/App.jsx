@@ -67,7 +67,7 @@ export default function App() {
         <div className="brand">
           <span className="brand-mark">◆</span>
           <div>
-            <div className="brand-title">Journal Tool</div>
+            <div className="brand-title">Journal Tool <span className="brand-version">v{__APP_VERSION__}</span></div>
             <div className="brand-subtitle">Elite Dangerous</div>
           </div>
         </div>

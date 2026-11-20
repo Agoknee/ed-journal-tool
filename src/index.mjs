@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Entry point. The warning filter has to be installed before node:sqlite is loaded, and
- * built-in modules load before any static-import module code runs, so the app is imported dynamically.
+ * Entry point. Kept free of top-level await so the same code can be bundled into a standalone executable.
  */
-import './suppress-experimental-warning.mjs';
+import './intl-segmenter-fallback.mjs';
+import { startApp } from './app.mjs';
 
-await import('./app.mjs');
+startApp();
