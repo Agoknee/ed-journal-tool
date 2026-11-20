@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import DataTable from '../components/DataTable.jsx';
 import FilterBar from '../components/FilterBar.jsx';
 import { useListFilters, useTableState } from '../hooks/use-list-filters.js';
@@ -6,15 +7,59 @@ import { useApi } from '../hooks/use-api.js';
 import { formatCredits, formatDateTime, formatFullCredits, formatNumber, formatRelativeTime } from '../format.js';
 
 const MAX_CARRIER_FUEL = 1000;
+const CARD_SORT_STORAGE_KEY = 'carriers.cardSort';
+
+/** Card sort options. Carriers with an unknown age or activity time are listed last. */
+const CARD_SORTS = {
+  age: { label: 'Age (oldest first)', compare: (first, second) => compareTimestamps(first.acquired_at, second.acquired_at, 'asc') },
+  name: { label: 'Name', compare: (first, second) => getCarrierLabel(first).localeCompare(getCarrierLabel(second), undefined, { sensitivity: 'base' }) },
+  activity: { label: 'Activity (most recent first)', compare: (first, second) => compareTimestamps(first.updated_at, second.updated_at, 'desc') },
+};
+
+function compareTimestamps(first, second, order) {
+  if (!first || !second) return Number(!first) - Number(!second);
+  return order === 'asc' ? first.localeCompare(second) : second.localeCompare(first);
+}
+
+function getCarrierLabel(carrier) {
+  return carrier.name ?? carrier.callsign ?? '';
+}
+
+function formatCarrierNames(carrierIds, carriers) {
+  return carrierIds
+    .map((carrierId) => carriers.find((carrier) => carrier.carrier_id === carrierId))
+    .map((carrier) => `${carrier.name ?? 'Unnamed'} (${carrier.callsign ?? '?'})`)
+    .join(', ') || '—';
+}
+
+function readStoredCardSort() {
+  try {
+    const storedSort = localStorage.getItem(CARD_SORT_STORAGE_KEY);
+    return CARD_SORTS[storedSort] ? storedSort : 'age';
+  } catch {
+    return 'age';
+  }
+}
 
 export default function CarriersPage({ commanderFilter }) {
   const carriersRequest = useApi('/api/stats/carriers', { commander: commanderFilter });
+  const [cardSort, setCardSort] = useState(readStoredCardSort);
+
+  const changeCardSort = (sortName) => {
+    setCardSort(sortName);
+    try {
+      localStorage.setItem(CARD_SORT_STORAGE_KEY, sortName);
+    } catch {
+      // Storage may be unavailable; the choice still applies for this session.
+    }
+  };
 
   return (
     <>
       <LoadingState requestState={carriersRequest}>
         {({ carriers, commanderStatuses }) => {
           const activeCarriers = carriers.filter((carrier) => !carrier.is_decommissioned);
+          const sortedCarriers = [...carriers].sort(CARD_SORTS[cardSort].compare);
           const totalBalance = activeCarriers.reduce((total, carrier) => total + (carrier.finance?.carrierBalance ?? 0), 0);
           return (
             <>
@@ -30,23 +75,23 @@ export default function CarriersPage({ commanderFilter }) {
                   rows={commanderStatuses}
                   columns={[
                     { key: 'commanderName', label: 'Commander', render: (status) => `CMDR ${status.commanderName}` },
-                    { key: 'carrierStatus', label: 'Carriers', render: (status) => <Badge tone={status.carrierStatus === 'None' ? 'neutral' : 'accent'}>{status.carrierStatus}</Badge> },
-                    {
-                      key: 'carrierIds',
-                      label: 'Names',
-                      render: (status) => status.carrierIds
-                        .map((carrierId) => carriers.find((carrier) => carrier.carrier_id === carrierId))
-                        .map((carrier) => `${carrier.name ?? 'Unnamed'} (${carrier.callsign ?? '?'})`)
-                        .join(', ') || '—',
-                    },
+                    { key: 'fleetCarrierIds', label: 'Fleet Carrier', render: (status) => formatCarrierNames(status.fleetCarrierIds, carriers) },
+                    { key: 'squadronCarrierIds', label: 'Squadron Fleet Carrier', render: (status) => formatCarrierNames(status.squadronCarrierIds, carriers) },
                   ]}
                 />
               </Section>
 
-              <Section title="Carriers">
+              <Section
+                title="Carriers"
+                actions={(
+                  <select value={cardSort} onChange={(changeEvent) => changeCardSort(changeEvent.target.value)} aria-label="Sort carriers">
+                    {Object.entries(CARD_SORTS).map(([sortName, sortOption]) => <option key={sortName} value={sortName}>Sort: {sortOption.label}</option>)}
+                  </select>
+                )}
+              >
                 {carriers.length === 0 ? <div className="notice">No carriers found.</div> : (
                   <div className="card-grid card-grid-wide">
-                    {carriers.map((carrier) => <CarrierCard key={carrier.carrier_id} carrier={carrier} />)}
+                    {sortedCarriers.map((carrier) => <CarrierCard key={carrier.carrier_id} carrier={carrier} />)}
                   </div>
                 )}
               </Section>
@@ -100,6 +145,7 @@ function CarrierCard({ carrier }) {
           { label: 'Available', value: formatFullCredits(finance.availableBalance) },
           { label: 'Reserve', value: finance.reserveBalance === undefined ? null : `${formatFullCredits(finance.reserveBalance)} (${finance.reservePercent ?? 0}%)` },
           finance.taxRates && { label: 'Tax rates', value: Object.entries(finance.taxRates).map(([service, rate]) => `${service} ${rate}%`).join(', ') },
+          !carrier.purchase_price && carrier.acquired_at && { label: 'First seen', value: formatDateTime(carrier.acquired_at) },
           carrier.purchase_price && { label: 'Purchased', value: `${formatDateTime(carrier.bought_at)} for ${formatCredits(carrier.purchase_price)}` },
         ]} />
       </div>

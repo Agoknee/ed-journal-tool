@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { postJson } from '../api.js';
 import DataTable from '../components/DataTable.jsx';
 import FilterBar from '../components/FilterBar.jsx';
@@ -20,12 +20,25 @@ const EXAMPLE_QUERIES = [
 ];
 
 export default function JournalsPage({ commanderFilter }) {
-  const [selectedFile, setSelectedFile] = useState(null);
+  const [selection, setSelection] = useState(null);
+  const entriesSectionRef = useRef(null);
+
+  // The request counter makes clicking the already-open file scroll to it again.
+  const selectFile = (journalFile) => setSelection((previous) => ({ journalFile, requestCount: (previous?.requestCount ?? 0) + 1 }));
+
+  useEffect(() => {
+    if (selection) entriesSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [selection]);
+
   return (
     <>
-      <JournalSummarySection commanderFilter={commanderFilter} />
-      <JournalFilesSection commanderFilter={commanderFilter} onSelectFile={setSelectedFile} />
-      {selectedFile && <JournalEntriesSection journalFile={selectedFile} onClose={() => setSelectedFile(null)} />}
+      <JournalSummarySection commanderFilter={commanderFilter} onSelectFile={selectFile} />
+      <JournalFilesSection commanderFilter={commanderFilter} onSelectFile={selectFile} />
+      {selection && (
+        <div ref={entriesSectionRef} className="scroll-target">
+          <JournalEntriesSection journalFile={selection.journalFile} onClose={() => setSelection(null)} />
+        </div>
+      )}
       <SqlConsoleSection />
       <StatModulesSection />
     </>
@@ -34,7 +47,7 @@ export default function JournalsPage({ commanderFilter }) {
 
 const EVENTS_PER_PAGE = 10;
 
-function JournalSummarySection({ commanderFilter }) {
+function JournalSummarySection({ commanderFilter, onSelectFile }) {
   const summaryRequest = useApi('/api/journals/summary', { commander: commanderFilter }, JOURNAL_TOPICS);
   const eventPage = usePagedRows(summaryRequest.data?.topEvents ?? [], { pageSize: EVENTS_PER_PAGE, resetKey: commanderFilter });
   return (
@@ -53,9 +66,10 @@ function JournalSummarySection({ commanderFilter }) {
             </StatGrid>
           </Section>
           <div className="two-column">
-            <Section title="Active journals" description="Journals the game is currently writing to.">
+            <Section title="Active journals" description="Journals the game is currently writing to. Click one to view its entries.">
               <DataTable
                 rows={activeFiles}
+                onRowClick={onSelectFile}
                 emptyMessage="No active journals. The game doesn't appear to be running."
                 columns={[
                   { key: 'file_name', label: 'File' },
@@ -123,7 +137,7 @@ function JournalFilesSection({ commanderFilter, onSelectFile }) {
 function JournalEntriesSection({ journalFile, onClose }) {
   const [eventFilter, setEventFilter] = useState('');
   const [expandedEntryId, setExpandedEntryId] = useState(null);
-  const tableState = useTableState({ defaultSort: 'line', defaultOrder: 'asc', pageSize: 50, resetKey: `${journalFile.id}:${eventFilter}` });
+  const tableState = useTableState({ defaultSort: 'line', defaultOrder: 'desc', pageSize: 50, resetKey: `${journalFile.id}:${eventFilter}` });
   const entriesRequest = useApi(`/api/journals/${journalFile.id}/entries`, { event: eventFilter, ...tableState.queryParams }, JOURNAL_TOPICS);
 
   return (

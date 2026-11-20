@@ -45,7 +45,7 @@ export function createJournalRoutes(database) {
     `).get(commanderIdFilter);
 
     const activeFiles = database.prepare(`
-      SELECT journal_files.id, journal_files.file_name, journal_files.status, journal_files.last_timestamp,
+      SELECT journal_files.id, journal_files.file_name, journal_files.status, journal_files.status_reason, journal_files.last_timestamp,
         journal_files.entry_count, commanders.name AS commander_name
       FROM journal_files LEFT JOIN commanders ON commanders.id = journal_files.commander_id
       WHERE journal_files.is_active = 1 AND (?1 IS NULL OR journal_files.commander_id = ?1)
@@ -87,7 +87,7 @@ export function createJournalRoutes(database) {
     }));
   });
 
-  // GET /api/journals/:fileId/entries?event=&limit=&offset=
+  // GET /api/journals/:fileId/entries?event=&order=asc|desc&limit=&offset= (newest first by default)
   router.get('/journals/:fileId/entries', (request, response) => {
     const sqlFilter = new SqlFilter().add('journal_file_id = ?', Number(request.params.fileId));
     if (request.query.event) sqlFilter.add('event = ?', String(request.query.event));
@@ -95,7 +95,7 @@ export function createJournalRoutes(database) {
     const pageResult = runPaginatedQuery(database, {
       selectSql: 'SELECT id, line_number, timestamp, event, data FROM journal_entries',
       sqlFilter,
-      orderByClause: 'ORDER BY line_number ASC',
+      orderByClause: `ORDER BY line_number ${request.query.order === 'asc' ? 'ASC' : 'DESC'}`,
       pagination: getPagination(request.query),
     });
     pageResult.rows = pageResult.rows.map((entryRow) => ({ ...entryRow, data: JSON.parse(entryRow.data) }));

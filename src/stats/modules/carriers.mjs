@@ -17,12 +17,15 @@ const CURRENT_SQUADRON_STATE_KEY = 'currentSquadron';
  *
  * A commander can only be in one squadron, so only their current squadron's carrier is linked;
  * the link is dropped when they join, leave or are removed from a squadron.
+ *
+ * A fleet carrier is always owned by the commander managing it. A squadron carrier is only
+ * considered owned when the commander's journals contain its CarrierBuy; otherwise it's a squadron link.
  */
 export default defineStatModule({
   name: 'carriers',
   title: 'Carriers',
   description: 'Fleet carrier and squadron carrier details: location, jumps, finances, crew services and trade orders.',
-  version: 2,
+  version: 3,
   dependsOn: ['markets'],
   events: [
     'CarrierStats', 'CarrierBuy', 'CarrierLocation', 'CarrierJumpRequest', 'CarrierJumpCancelled', 'CarrierJump',
@@ -64,6 +67,7 @@ export default defineStatModule({
       bought_at             TEXT,
       purchase_price        INTEGER,
       stats_updated_at      TEXT,
+      first_seen_at         TEXT,
       updated_at            TEXT
     );
 
@@ -102,10 +106,11 @@ export default defineStatModule({
 
   createProcessor(database) {
     const selectCarrier = database.prepare('SELECT * FROM carriers WHERE carrier_id = ?');
-    const insertCarrier = database.prepare('INSERT OR IGNORE INTO carriers (carrier_id, carrier_type, updated_at) VALUES (?, ?, ?)');
+    const insertCarrier = database.prepare('INSERT OR IGNORE INTO carriers (carrier_id, carrier_type, first_seen_at, updated_at) VALUES (?, ?, ?, ?)');
     const upsertCarrierCommander = database.prepare(`
       INSERT INTO carrier_commanders (carrier_id, commander_id, relationship, last_seen) VALUES (?, ?, ?, ?)
-      ON CONFLICT (carrier_id, commander_id) DO UPDATE SET relationship = excluded.relationship, last_seen = excluded.last_seen
+      ON CONFLICT (carrier_id, commander_id) DO UPDATE SET last_seen = excluded.last_seen,
+        relationship = CASE WHEN carrier_commanders.relationship = 'owner' THEN 'owner' ELSE excluded.relationship END
     `);
     const deleteOtherSquadronLinks = database.prepare(`
       DELETE FROM carrier_commanders WHERE commander_id = ? AND relationship = 'squadron' AND carrier_id != ?
@@ -132,7 +137,7 @@ export default defineStatModule({
     /** Creates the carrier (if needed) and links the commander to it. Returns the carrier row. */
     const ensureCarrier = (carrierId, carrierType, commanderId, timestamp) => {
       const knownCarrierType = CARRIER_RELATIONSHIPS[carrierType] ? carrierType : null;
-      insertCarrier.run(carrierId, knownCarrierType, timestamp);
+      insertCarrier.run(carrierId, knownCarrierType, timestamp, timestamp);
       const carrierRow = selectCarrier.get(carrierId);
       const effectiveCarrierType = knownCarrierType ?? carrierRow.carrier_type;
       if (knownCarrierType && !carrierRow.carrier_type) updateCarrier(carrierId, timestamp, { carrier_type: knownCarrierType });
@@ -223,6 +228,8 @@ export default defineStatModule({
           break;
 
         case 'CarrierBuy':
+          // Buying a carrier makes the commander its owner, including squadron carriers.
+          upsertCarrierCommander.run(carrierId, commanderId, 'owner', timestamp);
           updateCarrier(carrierId, timestamp, {
             callsign: data.Callsign ?? null,
             bought_at: timestamp,
@@ -346,24 +353,28 @@ export default defineStatModule({
           ...carrier,
           carrier_type_label: CARRIER_TYPE_LABELS[carrier.carrier_type] ?? carrier.carrier_type,
           commanders: commanderLinks.filter((link) => link.carrier_id === carrier.carrier_id),
+          acquired_at: carrier.bought_at ?? carrier.first_seen_at,
           effective_location: getEffectiveLocation(carrier),
           is_decommissioned: Boolean(carrier.pending_decommission && carrier.decommission_time && Date.parse(carrier.decommission_time) < Date.now()),
         }));
     };
 
-    // GET /api/stats/carriers?commander= -> carriers plus each commander's carrier status (None/FC/SFC/FC + SFC)
+    // GET /api/stats/carriers?commander= -> carriers plus each commander's owned carriers and status (None/FC/SFC/FC + SFC)
     router.get('/', (request, response) => {
       const commanderIdFilter = getCommanderIdFilter(request.query);
       const carriers = loadCarriers(commanderIdFilter);
 
       const commanderRows = database.prepare('SELECT id, name FROM commanders WHERE ?1 IS NULL OR id = ?1 ORDER BY name').all(commanderIdFilter);
       const commanderStatuses = commanderRows.map((commander) => {
-        const linkedCarriers = carriers.filter((carrier) => !carrier.is_decommissioned
-          && carrier.commanders.some((link) => link.commander_id === commander.id));
-        const hasFleetCarrier = linkedCarriers.some((carrier) => carrier.carrier_type === 'FleetCarrier');
-        const hasSquadronCarrier = linkedCarriers.some((carrier) => carrier.carrier_type === 'SquadronCarrier');
-        const carrierStatus = [hasFleetCarrier && 'FC', hasSquadronCarrier && 'SFC'].filter(Boolean).join(' + ') || 'None';
-        return { commanderId: commander.id, commanderName: commander.name, carrierStatus, carrierIds: linkedCarriers.map((carrier) => carrier.carrier_id) };
+        const ownedCarriers = carriers.filter((carrier) => !carrier.is_decommissioned
+          && carrier.commanders.some((link) => link.commander_id === commander.id && link.relationship === 'owner'));
+        const getCarrierIds = (carrierType) => ownedCarriers
+          .filter((carrier) => carrier.carrier_type === carrierType)
+          .map((carrier) => carrier.carrier_id);
+        const fleetCarrierIds = getCarrierIds('FleetCarrier');
+        const squadronCarrierIds = getCarrierIds('SquadronCarrier');
+        const carrierStatus = [fleetCarrierIds.length > 0 && 'FC', squadronCarrierIds.length > 0 && 'SFC'].filter(Boolean).join(' + ') || 'None';
+        return { commanderId: commander.id, commanderName: commander.name, carrierStatus, fleetCarrierIds, squadronCarrierIds };
       });
 
       response.json({ carriers, commanderStatuses });

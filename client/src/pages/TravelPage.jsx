@@ -8,6 +8,7 @@ import { formatDateTime, formatLightYears, formatNumber } from '../format.js';
 
 const JUMP_TYPE_OPTIONS = [
   { value: '', label: 'All jumps' },
+  { value: 'fsd', label: 'Non-carrier jumps' },
   { value: 'normal', label: 'Normal FSD jumps' },
   { value: 'supercharged', label: 'Supercharged jumps' },
   { value: 'synthesis', label: 'Synthesis-boosted jumps' },
@@ -16,11 +17,12 @@ const JUMP_TYPE_OPTIONS = [
 
 export default function TravelPage({ commanderFilter }) {
   const { filters, updateFilter, queryParams } = useListFilters();
-  const [jumpType, setJumpType] = useState('');
+  const [jumpType, setJumpType] = useState('fsd');
   const filterParams = { commander: commanderFilter, ...queryParams };
   const tableState = useTableState({ defaultSort: 'timestamp', resetKey: JSON.stringify({ ...filterParams, jumpType }) });
 
-  const summaryRequest = useApi('/api/stats/travel/summary', filterParams);
+  const summaryRequest = useApi('/api/stats/travel/summary', { ...filterParams, type: jumpType });
+  const selectedJumpTypeLabel = JUMP_TYPE_OPTIONS.find((option) => option.value === jumpType).label;
   const jumpsRequest = useApi('/api/stats/travel/jumps', { ...filterParams, type: jumpType, ...tableState.queryParams });
 
   return (
@@ -35,7 +37,7 @@ export default function TravelPage({ commanderFilter }) {
         {({ combined, perCommander }) => (
           <>
             <StatGrid>
-              <StatCard label="Total jumps" value={formatNumber(combined.total_jumps)} detail={formatLightYears(combined.total_distance_ly)} />
+              <StatCard label={jumpType ? selectedJumpTypeLabel : 'Total jumps'} value={formatNumber(combined.total_jumps)} detail={formatLightYears(combined.total_distance_ly)} />
               <StatCard label="Normal jumps" value={formatNumber(combined.normal_jumps)} />
               <StatCard label="Supercharged" value={formatNumber(combined.supercharged_jumps)} tone="accent"
                 detail={combined.fsd_jumps ? `${Math.round((combined.supercharged_jumps / combined.fsd_jumps) * 100)}% of FSD jumps` : null} />
@@ -49,6 +51,7 @@ export default function TravelPage({ commanderFilter }) {
                 rows={perCommander}
                 columns={[
                   { key: 'commander_name', label: 'Commander', render: (row) => `CMDR ${row.commander_name}` },
+                  { key: 'total_jumps', label: 'Jumps', align: 'right' },
                   { key: 'normal_jumps', label: 'Normal', align: 'right' },
                   { key: 'supercharged_jumps', label: 'Supercharged', align: 'right' },
                   { key: 'synthesis_boosted_jumps', label: 'Synthesis', align: 'right' },

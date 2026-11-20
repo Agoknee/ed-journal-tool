@@ -7,6 +7,19 @@ import {
 /** FSDJump BoostUsed values: 1-3 are FSD injection (synthesis) boosts, 4+ are neutron/white dwarf supercharges. */
 const SUPERCHARGED_BOOST_THRESHOLD = 4;
 
+/** SQL conditions for the jump type filter shared by the summary and jump list. */
+const JUMP_TYPE_CONDITIONS = {
+  fsd: "jumps.jump_type = 'fsd'",
+  carrier: "jumps.jump_type = 'carrier'",
+  normal: "jumps.jump_type = 'fsd' AND jumps.is_supercharged = 0",
+  supercharged: 'jumps.is_supercharged = 1',
+  synthesis: "jumps.jump_type = 'fsd' AND jumps.is_supercharged = 0 AND jumps.boost_used > 0",
+};
+
+function addJumpTypeFilter(sqlFilter, jumpType) {
+  if (JUMP_TYPE_CONDITIONS[jumpType]) sqlFilter.add(JUMP_TYPE_CONDITIONS[jumpType]);
+}
+
 /**
  * Current commander location plus a log of every FSD and carrier jump.
  */
@@ -190,12 +203,13 @@ export default defineStatModule({
       response.json({ locations: parseJsonColumns(locationRows, ['star_pos']) });
     });
 
-    // GET /api/stats/travel/summary?commander=&period=&from=&to=
+    // GET /api/stats/travel/summary?commander=&period=&from=&to=&type=fsd|carrier|normal|supercharged|synthesis
     router.get('/summary', (request, response) => {
       const sqlFilter = addStandardFilters(new SqlFilter(), request.query, {
         commanderColumn: 'jumps.commander_id',
         timestampColumn: 'jumps.timestamp',
       });
+      addJumpTypeFilter(sqlFilter, request.query.type);
       const summaryColumns = `
         COUNT(*) AS total_jumps,
         COALESCE(SUM(jump_type = 'fsd'), 0) AS fsd_jumps,
@@ -228,21 +242,14 @@ export default defineStatModule({
       response.json({ combined, perCommander });
     });
 
-    // GET /api/stats/travel/jumps?commander=&period=&from=&to=&search=&type=fsd|carrier|supercharged|synthesis&sort=&order=&limit=&offset=
+    // GET /api/stats/travel/jumps?commander=&period=&from=&to=&search=&type=fsd|carrier|normal|supercharged|synthesis&sort=&order=&limit=&offset=
     router.get('/jumps', (request, response) => {
       const sqlFilter = addStandardFilters(new SqlFilter(), request.query, {
         commanderColumn: 'jumps.commander_id',
         timestampColumn: 'jumps.timestamp',
         searchColumns: ['jumps.star_system', 'jumps.from_system'],
       });
-      const jumpTypeConditions = {
-        fsd: "jumps.jump_type = 'fsd'",
-        carrier: "jumps.jump_type = 'carrier'",
-        normal: "jumps.jump_type = 'fsd' AND jumps.is_supercharged = 0",
-        supercharged: 'jumps.is_supercharged = 1',
-        synthesis: "jumps.jump_type = 'fsd' AND jumps.is_supercharged = 0 AND jumps.boost_used > 0",
-      };
-      if (jumpTypeConditions[request.query.type]) sqlFilter.add(jumpTypeConditions[request.query.type]);
+      addJumpTypeFilter(sqlFilter, request.query.type);
 
       const pageResult = runPaginatedQuery(database, {
         selectSql: `
