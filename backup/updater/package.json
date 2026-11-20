@@ -1,0 +1,6 @@
+{
+  "name": "ed-journal-parser-updater",
+  "dependencies": {
+    "chokidar": "^4.0.3"
+  }
+}

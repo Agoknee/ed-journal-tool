@@ -1,0 +1,90 @@
+/**
+ * Small presentational building blocks shared by the dashboard pages.
+ */
+import CopyableText from './CopyableText.jsx';
+
+export function Section({ title, actions, children, description }) {
+  return (
+    <section className="section">
+      <header className="section-header">
+        <div>
+          <h2>{title}</h2>
+          {description && <p className="section-description">{description}</p>}
+        </div>
+        {actions && <div className="section-actions">{actions}</div>}
+      </header>
+      {children}
+    </section>
+  );
+}
+
+export function StatGrid({ children }) {
+  return <div className="stat-grid">{children}</div>;
+}
+
+export function StatCard({ label, value, detail, tone }) {
+  return (
+    <div className={`stat-card ${tone ? `stat-card-${tone}` : ''}`}>
+      <div className="stat-label">{label}</div>
+      <div className="stat-value">{value}</div>
+      {detail && <div className="stat-detail">{detail}</div>}
+    </div>
+  );
+}
+
+export function Badge({ tone = 'neutral', children, title }) {
+  return <span className={`badge badge-${tone}`} title={title}>{children}</span>;
+}
+
+export function Tabs({ tabs, activeTab, onChange }) {
+  return (
+    <div className="tabs" role="tablist">
+      {tabs.map((tab) => (
+        <button
+          key={tab.id}
+          type="button"
+          role="tab"
+          aria-selected={tab.id === activeTab}
+          className={tab.id === activeTab ? 'tab tab-active' : 'tab'}
+          onClick={() => onChange(tab.id)}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Label/value rows. Items with a copyText value can be clicked to copy it to the clipboard. */
+export function KeyValueList({ items }) {
+  return (
+    <dl className="key-value-list">
+      {items.filter(Boolean).map(({ label, value, copyText }) => (
+        <div key={label} className="key-value-row">
+          <dt>{label}</dt>
+          <dd>
+            {copyText !== undefined && copyText !== null && copyText !== ''
+              ? <CopyableText copyText={copyText}>{value ?? '—'}</CopyableText>
+              : value ?? '—'}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+export function LoadingState({ requestState, children, emptyMessage = 'No data yet.' }) {
+  if (requestState.error) return <div className="notice notice-error">Error: {requestState.error.message}</div>;
+  if (!requestState.data) return <div className="notice">Loading…</div>;
+  const content = children(requestState.data);
+  return content ?? <div className="notice">{emptyMessage}</div>;
+}
+
+export function ProgressBar({ value, max, label }) {
+  const percentage = max > 0 ? Math.min(100, Math.round((value / max) * 100)) : 0;
+  return (
+    <div className="progress" title={label ?? `${percentage}%`}>
+      <div className="progress-fill" style={{ width: `${percentage}%` }} />
+    </div>
+  );
+}
