@@ -81,6 +81,25 @@ export const coreSchemaSql = `
     first_seen_at  TEXT NOT NULL
   );
 
+  -- Manual BGS activity corrections, added on top of the tracked activity for one tick. User data,
+  -- not stats: never cleared by stat rebuilds. Each row is a signed amount for one commander, tick,
+  -- system, faction and activity type (the same types as bgs_activity), stamped with the tick's time
+  -- so it falls inside that tick's period. system_address is null for systems the app hasn't seen.
+  CREATE TABLE IF NOT EXISTS bgs_adjustments (
+    id              INTEGER PRIMARY KEY,
+    commander_id    INTEGER NOT NULL REFERENCES commanders(id),
+    timestamp       TEXT NOT NULL,       -- the tick the adjustment belongs to
+    system_address  INTEGER,
+    star_system     TEXT NOT NULL,
+    faction         TEXT NOT NULL,
+    activity_type   TEXT NOT NULL,
+    detail          TEXT NOT NULL DEFAULT '',
+    value           REAL NOT NULL,
+    created_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_bgs_adjustments_time ON bgs_adjustments(timestamp);
+
   -- Small key/value store for stat modules that need to remember state between entries.
   CREATE TABLE IF NOT EXISTS stat_state (
     module_name    TEXT NOT NULL,

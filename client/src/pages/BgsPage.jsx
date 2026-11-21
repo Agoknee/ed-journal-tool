@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
+import { deleteJson } from '../api.js';
 import { copyToClipboard } from '../clipboard.js';
+import { ADJUSTMENT_FIELDS } from '../bgs-adjustment-fields.js';
+import BgsAdjustmentDialog from '../components/BgsAdjustmentDialog.jsx';
 import CopyableText from '../components/CopyableText.jsx';
 import DataTable from '../components/DataTable.jsx';
 import SearchInput from '../components/SearchInput.jsx';
@@ -28,6 +31,7 @@ const ACTIVITY_COLUMNS = [
   { key: 'organic', label: 'Exobiology', getValue: (totals) => totals.organic, isCredits: true },
   { key: 'murders', label: 'Murders', getValue: (totals) => totals.murders },
   { key: 'groundMurders', label: 'Ground Murders', getValue: (totals) => totals.groundMurders },
+  { key: 'scenarios', label: 'Scenarios', getValue: (totals) => totals.scenarios },
   { key: 'missionsFailed', label: 'Failed Missions', getValue: (totals) => totals.missionsFailed },
   {
     key: 'spaceCz',
@@ -198,7 +202,7 @@ function getTickHeading(tickTime) {
   return `BGS Activity after Tick: ${formatTickTime(tickTime)}`;
 }
 
-export default function BgsPage({ commanderFilter }) {
+export default function BgsPage({ commanderFilter, commanders }) {
   const ticksRequest = useApi('/api/stats/bgs/ticks', {}, ['ticks']);
   const [customRange, setCustomRange] = useState({ from: '', to: '' });
   const periodGroups = buildPeriodGroups(ticksRequest.data?.ticks ?? [], customRange);
@@ -212,11 +216,17 @@ export default function BgsPage({ commanderFilter }) {
   const [selectedTypes, setSelectedTypes] = useState(() => new Set());
   // Systems left out of "Copy All" for this visit.
   const [excludedSystems, setExcludedSystems] = useState(() => new Set());
+  // The open adjustment dialog: { tick, target } (target null to add activity), or null when closed.
+  const [adjustmentDialog, setAdjustmentDialog] = useState(null);
+  // Manual adjustments belong to one tick, so they can only be made while a single tick is shown.
+  const editableTick = period.id === 'current' || period.id.startsWith('tick:') ? period.from : null;
+  const canAdjust = Boolean(editableTick) && commanders.length > 0;
+  const adjustTitle = canAdjust ? undefined : 'Choose the current tick or a single past tick to adjust activity';
 
   const activityRequest = useApi(
     '/api/stats/bgs/activity',
     { commander: commanderFilter, from: period.from ?? '', to: period.to ?? '' },
-    ['stats', 'ticks'],
+    ['stats', 'ticks', 'adjustments'],
   );
 
   const changeIncludeSecondaryInf = (isIncluded) => {
@@ -274,6 +284,9 @@ export default function BgsPage({ commanderFilter }) {
                 </label>
               </>
             )}
+            <button type="button" disabled={!canAdjust} title={adjustTitle ?? 'Add activity the app didn’t track, for any system and faction'} onClick={() => setAdjustmentDialog({ tick: editableTick, target: null })}>
+              Add Activity
+            </button>
             <label className="checkbox" title="Count influence missions give factions other than the mission giver">
               <input type="checkbox" checked={includeSecondaryInf} onChange={(changeEvent) => changeIncludeSecondaryInf(changeEvent.target.checked)} />
               Include Secondary INF
@@ -304,7 +317,7 @@ export default function BgsPage({ commanderFilter }) {
         <LoadingState requestState={activityRequest}>
           {() => {
             const systems = filteredSystems;
-            const includedSystems = systems.filter((system) => !excludedSystems.has(system.systemAddress));
+            const includedSystems = systems.filter((system) => !excludedSystems.has(system.systemKey));
             const allFactions = systems.flatMap((system) => system.factions);
             const totalInfluence = allFactions.reduce((total, faction) => total + getInfluenceTotal(faction.totals, includeSecondaryInf), 0);
             return (
@@ -340,11 +353,16 @@ export default function BgsPage({ commanderFilter }) {
 
       {filteredSystems.map((system) => (
         <SystemSection
-          key={system.systemAddress}
+          key={system.systemKey}
           system={system}
           includeSecondaryInf={includeSecondaryInf}
-          isIncluded={!excludedSystems.has(system.systemAddress)}
-          onToggleIncluded={() => toggleSystemIncluded(system.systemAddress)}
+          isIncluded={!excludedSystems.has(system.systemKey)}
+          onToggleIncluded={() => toggleSystemIncluded(system.systemKey)}
+          adjustTitle={adjustTitle}
+          onAdjust={canAdjust ? (faction) => setAdjustmentDialog({
+            tick: editableTick,
+            target: { systemAddress: system.systemAddress, starSystem: system.starSystem, faction: faction.name },
+          }) : null}
         />
       ))}
 
@@ -356,11 +374,29 @@ export default function BgsPage({ commanderFilter }) {
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
       />
+
+      <AdjustmentsSection
+        commanderFilter={commanderFilter}
+        onEdit={(adjustment) => setAdjustmentDialog({
+          tick: adjustment.tick,
+          target: { systemAddress: adjustment.systemAddress, starSystem: adjustment.starSystem, faction: adjustment.faction, commanderId: adjustment.commanderId },
+        })}
+      />
+
+      {adjustmentDialog && (
+        <BgsAdjustmentDialog
+          tick={adjustmentDialog.tick}
+          target={adjustmentDialog.target}
+          commanders={commanders}
+          commanderFilter={commanderFilter}
+          onClose={() => setAdjustmentDialog(null)}
+        />
+      )}
     </>
   );
 }
 
-function SystemSection({ system, includeSecondaryInf, isIncluded, onToggleIncluded }) {
+function SystemSection({ system, includeSecondaryInf, isIncluded, onToggleIncluded, adjustTitle, onAdjust }) {
   const visibleColumns = ACTIVITY_COLUMNS.filter((column) => system.factions.some((faction) => column.getValue(faction.totals, includeSecondaryInf)));
   const systemName = system.starSystem ?? `System #${system.systemAddress}`;
 
@@ -401,23 +437,59 @@ function SystemSection({ system, includeSecondaryInf, isIncluded, onToggleInclud
             sortValue: (faction) => column.getValue(faction.totals, includeSecondaryInf) ?? null,
             render: (faction) => renderActivityValue(column, faction, includeSecondaryInf),
           })),
+          {
+            key: 'adjust',
+            label: '',
+            shrink: true,
+            align: 'right',
+            render: (faction) => (
+              <button
+                type="button"
+                className="icon-button"
+                aria-label={`Edit ${faction.name} activity`}
+                title={adjustTitle ?? 'Edit activity totals'}
+                disabled={!onAdjust}
+                onClick={() => onAdjust(faction)}
+              >
+                ✎
+              </button>
+            ),
+          },
         ]}
       />
     </Section>
   );
 }
 
+/** A faction's value for one column. Values that include manual adjustments are marked, with the breakdown on hover. */
 function renderActivityValue(column, faction, includeSecondaryInf) {
-  const value = column.getValue(faction.totals, includeSecondaryInf);
-  if (!value) return <span className="muted">—</span>;
+  const value = column.getValue(faction.totals, includeSecondaryInf) ?? 0;
+  const manualValue = faction.manual ? column.getValue(faction.manual, includeSecondaryInf) ?? 0 : 0;
+  if (!value && !manualValue) return <span className="muted">—</span>;
+
+  let content = value.toLocaleString();
+  let title = null;
   if (column.key === 'inf') {
     const label = getInfluenceLabel(faction.state);
     const breakdown = `Primary ${faction.totals.infPrimary ?? 0}, secondary ${faction.totals.infSecondary ?? 0}`;
-    return <span title={label === 'INF' ? breakdown : `${label} · ${breakdown}`}>{value > 0 ? `+${value}` : value}</span>;
+    content = value > 0 ? `+${value}` : String(value);
+    title = label === 'INF' ? breakdown : `${label} · ${breakdown}`;
+  } else if (column.getText) {
+    content = column.getText(faction.totals);
+  } else if (column.isCredits) {
+    content = formatBgsNumber(value);
+    title = formatFullCredits(value);
   }
-  if (column.getText) return column.getText(faction.totals);
-  if (column.isCredits) return <span title={formatFullCredits(value)}>{formatBgsNumber(value)}</span>;
-  return value.toLocaleString();
+
+  if (!manualValue) return title ? <span title={title}>{content}</span> : content;
+  const formatPart = column.isCredits ? formatBgsNumber : String;
+  const manualBreakdown = `Tracked ${formatPart(value - manualValue)} · Manual ${manualValue > 0 ? '+' : ''}${formatPart(manualValue)}`;
+  return (
+    <span className="bgs-adjusted" title={[title, manualBreakdown].filter(Boolean).join('\n')}>
+      {content}
+      <span className="bgs-adjusted-mark" aria-label="includes a manual adjustment">●</span>
+    </span>
+  );
 }
 
 function sumTotals(factions, totalsKey) {
@@ -430,6 +502,79 @@ function formatTickTime(tickTime) {
 }
 
 const TICKS_PER_PAGE = 10;
+const ADJUSTMENTS_PER_PAGE = 20;
+
+/** Every manual adjustment, newest tick first, with a way to edit or delete it. */
+function AdjustmentsSection({ commanderFilter, onEdit }) {
+  const adjustmentsRequest = useApi('/api/bgs-adjustments', { commander: commanderFilter }, ['adjustments']);
+  const [deleteError, setDeleteError] = useState(null);
+
+  const deleteAdjustment = async (adjustment) => {
+    const fieldLabel = ADJUSTMENT_FIELDS[adjustment.field]?.fullLabel ?? adjustment.field;
+    if (!window.confirm(`Delete the ${fieldLabel} adjustment for ${adjustment.faction} in ${adjustment.starSystem}?`)) return;
+    try {
+      setDeleteError(null);
+      await deleteJson(`/api/bgs-adjustments/${adjustment.id}`);
+    } catch (error) {
+      setDeleteError(error.message);
+    }
+  };
+
+  return (
+    <Section
+      id="bgs-adjustments"
+      title="Manual Adjustments"
+      description="Corrections entered by hand, added on top of the tracked activity for their tick. Use the ✎ button on a faction, or Add Activity, to make them."
+    >
+      {deleteError && <div className="notice notice-error">{deleteError}</div>}
+      <LoadingState requestState={adjustmentsRequest}>
+        {({ adjustments }) => (
+          <DataTable
+            tableId="bgs.adjustments"
+            rowKey="id"
+            rows={adjustments}
+            pageSize={ADJUSTMENTS_PER_PAGE}
+            emptyMessage="No manual adjustments."
+            columns={[
+              { key: 'tick', label: 'Tick', render: (adjustment) => formatDateTime(adjustment.tick) },
+              ...(commanderFilter === 'all' ? [{ key: 'commanderName', label: 'Commander', render: (adjustment) => `CMDR ${adjustment.commanderName}` }] : []),
+              { key: 'starSystem', label: 'System', render: (adjustment) => formatSystemName(adjustment.starSystem) },
+              { key: 'faction', label: 'Faction' },
+              { key: 'field', label: 'Type', sortValue: (adjustment) => getFieldLabel(adjustment.field), render: (adjustment) => getFieldLabel(adjustment.field) },
+              {
+                key: 'value',
+                label: 'Adjustment',
+                align: 'right',
+                render: (adjustment) => {
+                  const isCredits = ADJUSTMENT_FIELDS[adjustment.field]?.isCredits;
+                  const text = isCredits ? formatBgsNumber(adjustment.value) : String(adjustment.value);
+                  return <span title={isCredits ? formatFullCredits(adjustment.value) : undefined}>{adjustment.value > 0 ? `+${text}` : text}</span>;
+                },
+              },
+              { key: 'updatedAt', label: 'Updated', render: (adjustment) => formatDateTime(adjustment.updatedAt) },
+              {
+                key: 'actions',
+                label: '',
+                align: 'right',
+                shrink: true,
+                render: (adjustment) => (
+                  <span className="bgs-row-actions">
+                    <button type="button" className="icon-button" aria-label="Edit" title="Edit this faction's totals for the tick" onClick={() => onEdit(adjustment)}>✎</button>
+                    <button type="button" className="icon-button icon-button-danger" aria-label="Delete" title="Delete this adjustment" onClick={() => deleteAdjustment(adjustment)}>✕</button>
+                  </span>
+                ),
+              },
+            ]}
+          />
+        )}
+      </LoadingState>
+    </Section>
+  );
+}
+
+function getFieldLabel(field) {
+  return ADJUSTMENT_FIELDS[field]?.fullLabel ?? field;
+}
 
 /**
  * Saved ticks, newest first, with how long each tick period lasted. "Show Activity" switches the

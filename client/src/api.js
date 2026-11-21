@@ -33,3 +33,7 @@ export function postJson(path, body) {
 export function putJson(path, body) {
   return fetchJson(path, { method: 'PUT', body });
 }
+
+export function deleteJson(path) {
+  return fetchJson(path, { method: 'DELETE' });
+}

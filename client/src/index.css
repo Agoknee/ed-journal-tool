@@ -138,7 +138,8 @@ button.last-tick:hover { border-color: var(--color-border); }
 .section .section { background: transparent; border: none; padding: 0; margin: 16px 0 0; }
 .section-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
 .section-description { margin: 4px 0 0; color: var(--color-text-muted); font-size: 0.9em; }
-.section-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.section-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; min-width: 0; max-width: 100%; }
+.section-actions select { max-width: 100%; min-width: 0; }
 .subheading { margin: 20px 0 10px; color: var(--color-text-muted); font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em; }
 
 .two-column { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 18px; }
@@ -391,3 +392,32 @@ button.last-tick:hover { border-color: var(--color-border); }
 .note-button-empty { color: var(--color-text-muted); font-style: italic; opacity: 0.7; }
 .note-input { width: 100%; min-width: 180px; padding: 2px 6px; font: inherit; color: var(--color-text); background: var(--color-surface); border: 1px solid var(--color-accent); border-radius: 4px; }
 .note-error { color: var(--color-danger); font-style: normal; }
+
+/* BGS manual adjustments: the ✎ edit button, the marker on adjusted values, and the edit dialog. */
+.icon-button { padding: 1px 7px; border-color: transparent; background: none; color: var(--color-text-muted); line-height: 1.4; }
+.icon-button:hover:not(:disabled) { color: var(--color-accent); background: var(--color-accent-soft); border-color: transparent; }
+.bgs-adjusted { color: var(--color-info); white-space: nowrap; }
+.bgs-adjusted-mark { margin-left: 4px; font-size: 0.55em; vertical-align: super; }
+.bgs-adjusted-note { color: var(--color-info); }
+.icon-button-danger:hover:not(:disabled) { color: var(--color-danger); background: var(--color-danger-soft); }
+.bgs-row-actions { display: inline-flex; gap: 2px; }
+.bgs-adjustment-dialog { width: min(820px, calc(100vw - 32px)); }
+.bgs-adjustment-dialog .table-settings-body { gap: 10px; padding-bottom: 0; }
+.bgs-adjustment-groups { display: flex; flex-wrap: wrap; gap: 0 10px; align-items: flex-start; }
+.bgs-adjustment-column { flex: 1 1 320px; min-width: 0; }
+.bgs-adjustment-dialog .table-settings-footer { position: sticky; bottom: 0; margin-top: 4px; padding: 12px 0 16px; background: var(--color-surface); border-top: 1px solid var(--color-border); }
+.bgs-adjustment-dialog p { margin: 0; }
+.bgs-adjustment-target { display: flex; flex-wrap: wrap; gap: 10px; }
+.bgs-adjustment-target label { display: flex; flex: 1 1 180px; flex-direction: column; gap: 4px; font-size: 0.85rem; color: var(--color-text-muted); }
+.bgs-adjustment-heading { display: flex; flex-direction: column; gap: 2px; }
+.bgs-adjustment-heading span { color: var(--color-text-muted); }
+.bgs-adjustment-group { margin: 0 0 10px; padding: 6px 10px 8px; border: 1px solid var(--color-border); border-radius: 6px; }
+.bgs-adjustment-group legend { padding: 0 4px; font-size: 0.8rem; color: var(--color-text-muted); }
+.bgs-adjustment-field { display: grid; grid-template-columns: minmax(0, 1fr) auto 100px; align-items: center; gap: 8px; padding: 2px 0; font-size: 0.9rem; }
+.bgs-adjustment-field input { width: 100%; box-sizing: border-box; padding: 3px 8px; text-align: right; }
+.bgs-adjustment-actions { display: flex; gap: 8px; }
+.input-invalid, .input-invalid:focus { border-color: var(--color-danger); outline-color: var(--color-danger); }
+@media (max-width: 480px) {
+  .bgs-adjustment-field { grid-template-columns: minmax(0, 1fr) 96px; }
+  .bgs-adjustment-field > span { grid-column: 1 / -1; grid-row: 2; }
+}

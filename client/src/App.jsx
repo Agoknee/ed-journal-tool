@@ -66,6 +66,7 @@ const PAGES = [
     subSections: [
       { label: 'Activity' },
       { label: 'Tick History', targetId: 'bgs-tick-history' },
+      { label: 'Manual Adjustments', targetId: 'bgs-adjustments' },
     ],
   },
   { id: 'chat', label: 'Chat', component: ChatPage },

@@ -70,6 +70,7 @@ const REPORT_ITEMS = [
   ['Exo', 'white', (totals) => totals.organic, formatBgsNumber],
   ['Murders', 'red', (totals) => totals.murders, String],
   ['GroundMurders', 'red', (totals) => totals.groundMurders, String],
+  ['Scenarios', 'yellow', (totals) => totals.scenarios, String],
   ['Fails', 'magenta', (totals) => totals.missionsFailed, String],
 ];
 

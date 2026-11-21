@@ -23,6 +23,7 @@ import { getCommanderIdFilter } from '../query-helpers.mjs';
  *   space_cz_objective  space conflict zone objectives; detail = cs (capital ship) | so (spec ops wing)
  *                  | cp (captain) | pr (propagandist)
  *   search_rescue  search and rescue items handed in (count)
+ *   scenario       in-space installation scenarios won (count); never tracked, only entered manually
  *
  * Activity at a station counts for the station's controlling faction in the current system, and
  * (like BGS-Tally) only for factions present in that system. Mission influence goes to the system
@@ -371,7 +372,8 @@ export default defineStatModule({
     });
 
     // GET /api/stats/bgs/activity?commander=&from=<timestamp>&to=<timestamp>
-    // -> systems with activity in [from, to), each with its factions and their totals
+    // -> systems with activity in [from, to), each with its factions. A faction's totals include
+    //    manual adjustments (bgs_adjustments); manual holds the adjustments alone, when there are any.
     router.get('/activity', (request, response) => {
       const conditions = [];
       const parameters = [];
@@ -390,11 +392,23 @@ export default defineStatModule({
       }
       const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
+      // Adjustments for systems typed in by name pick up the system's address once the app has seen it.
       const activityRows = database.prepare(`
-        SELECT system_address, MAX(star_system) AS star_system, faction, activity_type, detail,
+        SELECT system_address, MAX(star_system) AS star_system, faction, activity_type, detail, is_manual,
           SUM(value) AS total_value, MAX(timestamp) AS last_activity_at
-        FROM bgs_activity ${whereClause}
-        GROUP BY system_address, faction, activity_type, detail
+        FROM (
+          SELECT commander_id, timestamp, system_address, star_system, faction, activity_type, detail, value, 0 AS is_manual
+          FROM bgs_activity
+          UNION ALL
+          SELECT commander_id, timestamp,
+            COALESCE(system_address, (
+              SELECT states.system_address FROM bgs_system_states AS states
+              WHERE states.star_system = bgs_adjustments.star_system COLLATE NOCASE LIMIT 1
+            )),
+            star_system, faction, activity_type, NULLIF(detail, ''), value, 1
+          FROM bgs_adjustments
+        ) ${whereClause}
+        GROUP BY system_address, CASE WHEN system_address IS NULL THEN LOWER(star_system) END, faction, activity_type, detail, is_manual
       `).all(...parameters);
 
       const selectSystemState = database.prepare(`
@@ -408,7 +422,9 @@ export default defineStatModule({
 
       const systemsByAddress = new Map();
       for (const activityRow of activityRows) {
-        let system = systemsByAddress.get(activityRow.system_address);
+        // Systems known only by a typed-in name are keyed by that name.
+        const systemKey = activityRow.system_address === null ? `name:${activityRow.star_system.toLowerCase()}` : String(activityRow.system_address);
+        let system = systemsByAddress.get(systemKey);
         if (!system) {
           // The faction list as of the end of the period (or the earliest known, if visited only later).
           const toTimestamp = request.query.to || null;
@@ -416,6 +432,7 @@ export default defineStatModule({
             ?? selectAnySystemState.get(activityRow.system_address);
           const knownFactions = systemState ? JSON.parse(systemState.factions) : [];
           system = {
+            systemKey,
             systemAddress: activityRow.system_address,
             starSystem: activityRow.star_system ?? systemState?.star_system ?? null,
             lastActivityAt: activityRow.last_activity_at,
@@ -423,7 +440,7 @@ export default defineStatModule({
             factionStates: Object.fromEntries(knownFactions.map((faction) => [faction.name, faction.state])),
             factions: new Map(),
           };
-          systemsByAddress.set(activityRow.system_address, system);
+          systemsByAddress.set(systemKey, system);
         }
         if (activityRow.last_activity_at > system.lastActivityAt) system.lastActivityAt = activityRow.last_activity_at;
         system.starSystem ??= activityRow.star_system;
@@ -434,10 +451,12 @@ export default defineStatModule({
           system.factions.set(activityRow.faction, faction);
         }
         addToTotals(faction.totals, activityRow.activity_type, activityRow.detail, activityRow.total_value);
+        if (activityRow.is_manual) addToTotals(faction.manual ??= {}, activityRow.activity_type, activityRow.detail, activityRow.total_value);
       }
 
       const systems = [...systemsByAddress.values()]
         .map((system) => ({
+          systemKey: system.systemKey,
           systemAddress: system.systemAddress,
           starSystem: system.starSystem,
           lastActivityAt: system.lastActivityAt,
@@ -499,7 +518,7 @@ function addToTotals(totals, activityType, detail, value) {
       const key = {
         bounty: 'bounties', combat_bond: 'combatBonds', trade_buy: 'tradeBuy', trade_profit: 'tradeProfit',
         black_market: 'blackMarketProfit', exploration: 'exploration', organic: 'organic', murder: 'murders',
-        ground_murder: 'groundMurders', mission_failed: 'missionsFailed', search_rescue: 'searchAndRescue',
+        ground_murder: 'groundMurders', mission_failed: 'missionsFailed', scenario: 'scenarios', search_rescue: 'searchAndRescue',
       }[activityType];
       if (key) totals[key] = (totals[key] ?? 0) + value;
     }

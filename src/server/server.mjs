@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import express from 'express';
 import { logger } from '../logger.mjs';
+import { createBgsAdjustmentRoutes } from './routes/bgs-adjustment-routes.mjs';
 import { createEventRoutes } from './routes/event-routes.mjs';
 import { createJournalRoutes } from './routes/journal-routes.mjs';
 import { createNoteRoutes } from './routes/note-routes.mjs';
@@ -48,6 +49,7 @@ export function createServer({ database, databasePath, statsEngine, journalMonit
   apiRouter.use('/sql', createSqlRoutes(databasePath, database));
   apiRouter.use('/events', createEventRoutes(eventHub));
   apiRouter.use('/', createNoteRoutes(database, eventHub));
+  apiRouter.use('/bgs-adjustments', createBgsAdjustmentRoutes(database, eventHub));
 
   // GET /api/stats -> registered stat modules
   apiRouter.get('/stats', (request, response) => {
