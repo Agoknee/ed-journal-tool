@@ -22,7 +22,7 @@ const defaultDatabasePath = path.join(dataDirectoryPath, 'journals.db');
 
 /**
  * Parses command-line options.
- * @returns {{ port: number, bind: string, debug: boolean, journaldir: string, database: string, rebuildStats: boolean }}
+ * @returns {{ port: number, bind: string, debug: boolean, journaldir: string, database: string, devClient: boolean, rebuildStats: boolean }}
  */
 export function parseCommandLineOptions(argv = process.argv) {
   return yargs(hideBin(argv))
@@ -57,6 +57,11 @@ export function parseCommandLineOptions(argv = process.argv) {
       default: defaultDatabasePath,
       describe: 'Path to the SQLite database file',
     })
+    .option('dev-client', {
+      type: 'boolean',
+      default: false,
+      describe: 'Serve the dashboard from client source with the Vite dev server (hot reload) instead of client/dist',
+    })
     .option('rebuild-stats', {
       type: 'boolean',
       default: false,
@@ -76,4 +81,4 @@ export function parseCommandLineOptions(argv = process.argv) {
     .parseSync();
 }
 
-export { projectRootPath };
+export { appVersion, projectRootPath };

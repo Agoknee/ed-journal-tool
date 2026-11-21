@@ -4,10 +4,12 @@ import express from 'express';
 import { logger } from '../logger.mjs';
 import { createEventRoutes } from './routes/event-routes.mjs';
 import { createJournalRoutes } from './routes/journal-routes.mjs';
+import { createNoteRoutes } from './routes/note-routes.mjs';
 import { createSqlRoutes } from './routes/sql-routes.mjs';
 
 /**
- * Creates the Express app serving the API at /api and the dashboard client.
+ * Creates the Express app serving the API at /api. The dashboard is added afterwards with
+ * serveBuiltClient, or serveClientWithVite (vite-dev-client.mjs) for development.
  * @param {object} options
  * @param {import('node:sqlite').DatabaseSync} options.database
  * @param {string} options.databasePath
@@ -15,9 +17,8 @@ import { createSqlRoutes } from './routes/sql-routes.mjs';
  * @param {import('../journals/journal-monitor.mjs').JournalMonitor} options.journalMonitor
  * @param {import('../events/event-hub.mjs').EventHub} options.eventHub
  * @param {string} options.journalDirectory
- * @param {string} options.clientDistPath
  */
-export function createServer({ database, databasePath, statsEngine, journalMonitor, eventHub, journalDirectory, clientDistPath }) {
+export function createServer({ database, databasePath, statsEngine, journalMonitor, clockMonitor, eventHub, journalDirectory }) {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '1mb' }));
@@ -38,6 +39,7 @@ export function createServer({ database, databasePath, statsEngine, journalMonit
       databasePath,
       startedAt: serverStartedAt,
       scan: journalMonitor.scanProgress,
+      clock: clockMonitor.status,
       statModules: statsEngine.getModuleSummaries(),
     });
   });
@@ -45,6 +47,7 @@ export function createServer({ database, databasePath, statsEngine, journalMonit
   apiRouter.use('/', createJournalRoutes(database));
   apiRouter.use('/sql', createSqlRoutes(databasePath, database));
   apiRouter.use('/events', createEventRoutes(eventHub));
+  apiRouter.use('/', createNoteRoutes(database, eventHub));
 
   // GET /api/stats -> registered stat modules
   apiRouter.get('/stats', (request, response) => {
@@ -74,13 +77,13 @@ export function createServer({ database, databasePath, statsEngine, journalMonit
   });
 
   app.use('/api', apiRouter);
-  serveClient(app, clientDistPath);
   return app;
 }
 
 const serverStartedAt = new Date().toISOString();
 
-function serveClient(app, clientDistPath) {
+/** Serves the built dashboard (client/dist), falling back to index.html for client-side routes. */
+export function serveBuiltClient(app, clientDistPath) {
   const indexHtmlPath = path.join(clientDistPath, 'index.html');
   if (!existsSync(indexHtmlPath)) {
     logger.warn(`Dashboard client not built (missing ${indexHtmlPath}). Run "npm run build" to build it.`);

@@ -61,6 +61,20 @@ export const coreSchemaSql = `
     updated_at      TEXT
   );
 
+  -- Notes the user writes about carriers. User data, not stats: never cleared by stat rebuilds.
+  CREATE TABLE IF NOT EXISTS carrier_notes (
+    carrier_id   INTEGER PRIMARY KEY,   -- the carrier's market id
+    note         TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+  );
+
+  -- Notes the user writes about commanders (shown for commanders without a carrier).
+  CREATE TABLE IF NOT EXISTS commander_notes (
+    commander_id  INTEGER PRIMARY KEY REFERENCES commanders(id),
+    note          TEXT NOT NULL,
+    updated_at    TEXT NOT NULL
+  );
+
   -- Small key/value store for stat modules that need to remember state between entries.
   CREATE TABLE IF NOT EXISTS stat_state (
     module_name    TEXT NOT NULL,

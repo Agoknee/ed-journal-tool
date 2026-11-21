@@ -29,3 +29,7 @@ export async function fetchJson(path, { signal, method = 'GET', body } = {}) {
 export function postJson(path, body) {
   return fetchJson(path, { method: 'POST', body });
 }
+
+export function putJson(path, body) {
+  return fetchJson(path, { method: 'PUT', body });
+}

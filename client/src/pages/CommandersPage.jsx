@@ -5,6 +5,7 @@ import { Badge, KeyValueList, LoadingState, Section, StatCard, StatGrid, Tabs } 
 import { useApi } from '../hooks/use-api.js';
 import {
   formatCredits, formatDateTime, formatDuration, formatNumber, formatRelativeTime, formatShipName,
+  formatSystemName,
 } from '../format.js';
 
 export default function CommandersPage({ commanderFilter }) {
@@ -75,7 +76,7 @@ function CommanderCard({ profile, location, assets, carrierStatus }) {
         </div>
       </header>
       <KeyValueList items={[
-        { label: 'Location', value: location?.star_system, copyText: location?.star_system },
+        { label: 'Location', value: formatSystemName(location?.star_system), copyText: location?.star_system },
         location?.is_docked
           ? {
             label: 'Docked at',
@@ -137,7 +138,7 @@ function AssetDetailsSection({ commanderId }) {
                   columns={[
                     { key: 'shipType', label: 'Ship', render: (ship) => <>{ship.shipType} {ship.isCurrent && <Badge tone="live">Current</Badge>}</> },
                     { key: 'shipName', label: 'Name' },
-                    { key: 'starSystem', label: 'Location', render: (ship) => (ship.isCurrent ? 'With commander' : ship.starSystem ?? '—') },
+                    { key: 'starSystem', label: 'Location', render: (ship) => (ship.isCurrent ? 'With commander' : formatSystemName(ship.starSystem) ?? '—') },
                     { key: 'value', label: 'Value', align: 'right', render: (ship) => formatCredits(ship.value) },
                   ]}
                 />
@@ -150,7 +151,7 @@ function AssetDetailsSection({ commanderId }) {
                   columns={[
                     { key: 'name', label: 'Module' },
                     { key: 'engineering', label: 'Engineering', render: (storedModule) => (storedModule.engineering ? `${storedModule.engineering} G${storedModule.engineeringLevel}` : '—') },
-                    { key: 'starSystem', label: 'Location' },
+                    { key: 'starSystem', label: 'Location', render: (storedModule) => formatSystemName(storedModule.starSystem) ?? '—' },
                     { key: 'value', label: 'Value', align: 'right', render: (storedModule) => formatCredits(storedModule.value) },
                   ]}
                 />

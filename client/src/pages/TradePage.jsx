@@ -4,9 +4,9 @@ import FilterBar from '../components/FilterBar.jsx';
 import { useListFilters, useTableState } from '../hooks/use-list-filters.js';
 import { Badge, LoadingState, Section, StatCard, StatGrid } from '../components/ui.jsx';
 import { useApi } from '../hooks/use-api.js';
-import { formatCredits, formatDateTime, formatFullCredits, formatNumber } from '../format.js';
+import { formatCredits, formatDateTime, formatFullCredits, formatNumber, formatSystemName } from '../format.js';
 
-export default function CommoditiesPage({ commanderFilter }) {
+export default function TradePage({ commanderFilter }) {
   const { filters, updateFilter, queryParams } = useListFilters();
   const [tradeType, setTradeType] = useState('');
   const [commodity, setCommodity] = useState('');
@@ -60,10 +60,10 @@ export default function CommoditiesPage({ commanderFilter }) {
               )}
             </Section>
             <div className="two-column">
-              <Section title="By commodity">
+              <Section id="trade-commodities" title="By Commodity">
                 <DataTable rowKey="commodity" rows={byCommodity} columns={[{ key: 'commodity_name', label: 'Commodity' }, ...totalsColumns]} />
               </Section>
-              <Section title="By market / carrier" description="Top 100 by volume">
+              <Section id="trade-markets" title="By Market / Carrier" description="Top 100 by volume">
                 <DataTable rowKey="market_id" rows={byMarket} columns={[
                   { key: 'market_name', label: 'Market', render: (row) => <>{row.market_name ?? `Market #${row.market_id}`} {row.is_carrier === 1 && <Badge tone="info">Carrier</Badge>}</> },
                   ...totalsColumns,
@@ -74,7 +74,7 @@ export default function CommoditiesPage({ commanderFilter }) {
         )}
       </LoadingState>
 
-      <Section title="Trades">
+      <Section id="trade-history" title="Trade History">
         <DataTable
           isLoading={tradesRequest.isLoading}
           rows={tradesRequest.data?.rows ?? []}
@@ -90,7 +90,7 @@ export default function CommoditiesPage({ commanderFilter }) {
             { key: 'total_value', label: 'Total', align: 'right', sortKey: 'value', render: (trade) => formatCredits(trade.total_value) },
             { key: 'profit', label: 'Profit', align: 'right', sortKey: 'profit', render: (trade) => (trade.profit === null ? '—' : formatCredits(trade.profit)) },
             { key: 'market_name', label: 'Market', sortKey: 'market', render: (trade) => <>{trade.market_name ?? `#${trade.market_id}`} {trade.is_carrier === 1 && <Badge tone="info">FC</Badge>}</> },
-            { key: 'star_system', label: 'System' },
+            { key: 'star_system', label: 'System', render: (row) => formatSystemName(row.star_system) ?? '—' },
           ]}
         />
       </Section>

@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import { runInTransaction } from '../../database/database.mjs';
+import { getCommodityDisplayName } from '../commodity-names.mjs';
 import { defineStatModule } from '../define-stat-module.mjs';
 import {
   SqlFilter, addStandardFilters, getCommanderIdFilter, getOrderByClause, getPagination, parseJsonColumns, runPaginatedQuery,
@@ -10,6 +12,23 @@ const CARRIER_TYPE_LABELS = { FleetCarrier: 'FC', SquadronCarrier: 'SFC' };
 /** Events that end a commander's squadron membership (and so their squadron carrier link). */
 const SQUADRON_CHANGE_EVENTS = new Set(['JoinedSquadron', 'LeftSquadron', 'KickedFromSquadron', 'DisbandedSquadron']);
 const CURRENT_SQUADRON_STATE_KEY = 'currentSquadron';
+
+/** Journals don't log cooldowns: a jump starts a 4:50 cooldown when it departs, a cancelled jump 1 minute. */
+const JUMP_COOLDOWN_MS = (4 * 60 + 50) * 1000;
+const CANCELLED_JUMP_COOLDOWN_MS = 60 * 1000;
+
+function addMilliseconds(timestamp, milliseconds) {
+  return timestamp ? new Date(Date.parse(timestamp) + milliseconds).toISOString().replace('.000Z', 'Z') : null;
+}
+
+/**
+ * Events that name a body along with its system address and body id. CarrierLocation only reports a
+ * body id, so these let the carrier's body be shown by name.
+ */
+const BODY_NAME_EVENTS = [
+  'Scan', 'FSSBodySignals', 'SAASignalsFound', 'Location', 'FSDJump', 'SupercruiseExit', 'ApproachBody',
+  'Touchdown', 'Liftoff', 'Embark', 'Disembark', 'CarrierJump', 'CarrierJumpRequest',
+];
 
 /**
  * Fleet carriers (FC) and squadron fleet carriers (SFC) the commanders manage:
@@ -25,19 +44,20 @@ export default defineStatModule({
   name: 'carriers',
   title: 'Carriers',
   description: 'Fleet carrier and squadron carrier details: location, jumps, finances, crew services and trade orders.',
-  version: 3,
+  version: 8,
   dependsOn: ['markets'],
   events: [
     'CarrierStats', 'CarrierBuy', 'CarrierLocation', 'CarrierJumpRequest', 'CarrierJumpCancelled', 'CarrierJump',
     'CarrierFinance', 'CarrierBankTransfer', 'CarrierCrewServices', 'CarrierDepositFuel', 'CarrierNameChange',
     'CarrierDockingPermission', 'CarrierTradeOrder', 'CarrierDecommission', 'CarrierCancelDecommission',
-    'SquadronStartup', ...SQUADRON_CHANGE_EVENTS,
+    'SquadronStartup', ...SQUADRON_CHANGE_EVENTS, ...BODY_NAME_EVENTS,
   ],
   ownedObjects: [
     { type: 'table', name: 'carriers' },
     { type: 'table', name: 'carrier_commanders' },
     { type: 'table', name: 'carrier_jump_history' },
     { type: 'table', name: 'carrier_transactions' },
+    { type: 'table', name: 'carrier_body_names' },
   ],
   schemaSql: `
     CREATE TABLE IF NOT EXISTS carriers (
@@ -67,6 +87,8 @@ export default defineStatModule({
       bought_at             TEXT,
       purchase_price        INTEGER,
       stats_updated_at      TEXT,
+      cooldown_starts_at    TEXT,                  -- when the last requested jump departs/departed, or when it was cancelled
+      cooldown_ends_at      TEXT,
       first_seen_at         TEXT,
       updated_at            TEXT
     );
@@ -102,10 +124,21 @@ export default defineStatModule({
       player_balance    INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_carrier_transactions_carrier ON carrier_transactions(carrier_id, timestamp);
+
+    CREATE TABLE IF NOT EXISTS carrier_body_names (
+      system_address  INTEGER NOT NULL,
+      body_id         INTEGER NOT NULL,
+      body_name       TEXT NOT NULL,
+      PRIMARY KEY (system_address, body_id)
+    );
   `,
 
   createProcessor(database) {
     const selectCarrier = database.prepare('SELECT * FROM carriers WHERE carrier_id = ?');
+    const upsertBodyName = database.prepare(`
+      INSERT INTO carrier_body_names (system_address, body_id, body_name) VALUES (?, ?, ?)
+      ON CONFLICT (system_address, body_id) DO UPDATE SET body_name = excluded.body_name
+    `);
     const insertCarrier = database.prepare('INSERT OR IGNORE INTO carriers (carrier_id, carrier_type, first_seen_at, updated_at) VALUES (?, ?, ?, ?)');
     const upsertCarrierCommander = database.prepare(`
       INSERT INTO carrier_commanders (carrier_id, commander_id, relationship, last_seen) VALUES (?, ?, ?, ?)
@@ -179,6 +212,12 @@ export default defineStatModule({
     };
 
     return ({ commanderId, event, timestamp, data }, moduleState) => {
+      const bodyName = data.BodyName ?? data.Body;
+      if (Number.isInteger(data.SystemAddress) && Number.isInteger(data.BodyID) && typeof bodyName === 'string' && bodyName) {
+        upsertBodyName.run(data.SystemAddress, data.BodyID, bodyName);
+      }
+      if (event !== 'CarrierJump' && event !== 'CarrierJumpRequest' && BODY_NAME_EVENTS.includes(event)) return;
+
       if (event === 'SquadronStartup' || SQUADRON_CHANGE_EVENTS.has(event)) {
         handleSquadronEvent(commanderId, event, data, moduleState);
         return;
@@ -257,13 +296,21 @@ export default defineStatModule({
             departureTime: data.DepartureTime ?? null,
             requestedAt: timestamp,
           };
-          updateCarrier(carrierId, timestamp, { pending_jump: JSON.stringify(pendingJump) });
+          updateCarrier(carrierId, timestamp, {
+            pending_jump: JSON.stringify(pendingJump),
+            cooldown_starts_at: pendingJump.departureTime,
+            cooldown_ends_at: addMilliseconds(pendingJump.departureTime, JUMP_COOLDOWN_MS),
+          });
           insertJumpHistory.run(carrierId, commanderId, timestamp, 'requested', pendingJump.starSystem, pendingJump.body, pendingJump.departureTime);
           break;
         }
 
         case 'CarrierJumpCancelled':
-          updateCarrier(carrierId, timestamp, { pending_jump: null });
+          updateCarrier(carrierId, timestamp, {
+            pending_jump: null,
+            cooldown_starts_at: timestamp,
+            cooldown_ends_at: addMilliseconds(timestamp, CANCELLED_JUMP_COOLDOWN_MS),
+          });
           insertJumpHistory.run(carrierId, commanderId, timestamp, 'cancelled', null, null, null);
           break;
 
@@ -303,7 +350,7 @@ export default defineStatModule({
             return {
               ...tradeOrders,
               [commodityKey]: {
-                commodity: data.Commodity_Localised ?? data.Commodity,
+                commodity: getCommodityDisplayName(data.Commodity_Localised, data.Commodity),
                 orderType: data.PurchaseOrder !== undefined ? 'buy' : 'sell',
                 quantity: data.PurchaseOrder ?? data.SaleOrder ?? 0,
                 price: data.Price ?? null,
@@ -337,9 +384,14 @@ export default defineStatModule({
       const carrierRows = database.prepare(`
         SELECT carriers.*,
           COALESCE(carriers.name, directory.carrier_name) AS name,
-          COALESCE(carriers.callsign, directory.callsign) AS callsign
+          COALESCE(carriers.callsign, directory.callsign) AS callsign,
+          body_names.body_name AS looked_up_body_name,
+          carrier_notes.note
         FROM carriers
         LEFT JOIN market_directory AS directory ON directory.market_id = carriers.carrier_id
+        LEFT JOIN carrier_notes ON carrier_notes.carrier_id = carriers.carrier_id
+        LEFT JOIN carrier_body_names AS body_names
+          ON body_names.system_address = carriers.system_address AND body_names.body_id = carriers.body_id
         WHERE carriers.carrier_id IN (SELECT carrier_id FROM carrier_commanders WHERE ?1 IS NULL OR commander_id = ?1)
         ORDER BY carriers.carrier_type, name
       `).all(commanderIdFilter);
@@ -347,8 +399,18 @@ export default defineStatModule({
         SELECT links.carrier_id, links.commander_id, links.relationship, links.last_seen, commanders.name AS commander_name
         FROM carrier_commanders AS links JOIN commanders ON commanders.id = links.commander_id
       `).all();
+      const selectBodyName = database.prepare('SELECT body_name FROM carrier_body_names WHERE system_address = ? AND body_id = ?');
+      // CarrierLocation and some jump requests only give a body id; look up its name from other events.
+      const withBodyName = (location) => (location && !location.body && location.systemAddress != null && location.bodyId != null
+        ? { ...location, body: selectBodyName.get(location.systemAddress, location.bodyId)?.body_name ?? null }
+        : location);
 
       return parseJsonColumns(carrierRows, ['space_usage', 'finance', 'crew_services', 'ship_packs', 'module_packs', 'trade_orders', 'pending_jump'])
+        .map(({ looked_up_body_name: lookedUpBodyName, ...carrierRow }) => ({
+          ...carrierRow,
+          body: carrierRow.body ?? lookedUpBodyName ?? null,
+          pending_jump: withBodyName(carrierRow.pending_jump),
+        }))
         .map((carrier) => ({
           ...carrier,
           carrier_type_label: CARRIER_TYPE_LABELS[carrier.carrier_type] ?? carrier.carrier_type,
@@ -359,12 +421,65 @@ export default defineStatModule({
         }));
     };
 
-    // GET /api/stats/carriers?commander= -> carriers plus each commander's owned carriers and status (None/FC/SFC/FC + SFC)
-    router.get('/', (request, response) => {
-      const commanderIdFilter = getCommanderIdFilter(request.query);
+    // GET /api/stats/carriers?commander= -> carriers plus each commander's squadron, owned carriers and status (None/FC/SFC/FC + SFC)
+    const selectCarrierNote = database.prepare('SELECT note FROM carrier_notes WHERE carrier_id = ?');
+    const selectCommanderNote = database.prepare('SELECT note FROM commander_notes WHERE commander_id = ?');
+    const upsertCarrierNote = database.prepare(`
+      INSERT INTO carrier_notes (carrier_id, note, updated_at) VALUES (?, ?, ?)
+      ON CONFLICT (carrier_id) DO UPDATE SET note = excluded.note, updated_at = excluded.updated_at
+    `);
+    const upsertCommanderNote = database.prepare(`
+      INSERT INTO commander_notes (commander_id, note, updated_at) VALUES (?, ?, ?)
+      ON CONFLICT (commander_id) DO UPDATE SET note = excluded.note, updated_at = excluded.updated_at
+    `);
+    const deleteCarrierNote = database.prepare('DELETE FROM carrier_notes WHERE carrier_id = ?');
+    const deleteCommanderNote = database.prepare('DELETE FROM commander_notes WHERE commander_id = ?');
+
+    /**
+     * Keeps notes on the rows the overview shows: a commander's note moves to their (oldest) carrier
+     * once they own one, and a decommissioned carrier's note moves back to its owner. A note moved
+     * onto one that already exists is appended to it. Returns true if anything moved.
+     */
+    const moveNotesToVisibleRows = (carriers, commanderStatuses) => runInTransaction(database, () => {
+      const now = new Date().toISOString();
+      let hasMovedNotes = false;
+      for (const status of commanderStatuses) {
+        const ownedCarrierIds = new Set([...status.fleetCarrierIds, ...status.squadronCarrierIds]);
+        const ownedCarriers = carriers
+          .filter((carrier) => ownedCarrierIds.has(carrier.carrier_id))
+          .sort((first, second) => (first.acquired_at ?? '￿').localeCompare(second.acquired_at ?? '￿'));
+        const lostCarriers = carriers.filter((carrier) => carrier.is_decommissioned && carrier.note
+          && carrier.commanders.some((link) => link.commander_id === status.commanderId && link.relationship === 'owner'));
+
+        let commanderNote = selectCommanderNote.get(status.commanderId)?.note ?? null;
+        for (const lostCarrier of lostCarriers) {
+          commanderNote = joinNotes(commanderNote, lostCarrier.note);
+          deleteCarrierNote.run(lostCarrier.carrier_id);
+          hasMovedNotes = true;
+        }
+
+        if (commanderNote && ownedCarriers.length > 0) {
+          const targetCarrierId = ownedCarriers[0].carrier_id;
+          upsertCarrierNote.run(targetCarrierId, joinNotes(selectCarrierNote.get(targetCarrierId)?.note, commanderNote), now);
+          deleteCommanderNote.run(status.commanderId);
+          hasMovedNotes = true;
+        } else if (lostCarriers.length > 0) {
+          upsertCommanderNote.run(status.commanderId, commanderNote, now);
+        }
+      }
+      return hasMovedNotes;
+    });
+
+    const loadOverview = (commanderIdFilter) => {
       const carriers = loadCarriers(commanderIdFilter);
 
-      const commanderRows = database.prepare('SELECT id, name FROM commanders WHERE ?1 IS NULL OR id = ?1 ORDER BY name').all(commanderIdFilter);
+      const commanderRows = database.prepare(`
+        SELECT commanders.id, commanders.name, profiles.squadron_name, commander_notes.note
+        FROM commanders
+        LEFT JOIN commander_profiles AS profiles ON profiles.commander_id = commanders.id
+        LEFT JOIN commander_notes ON commander_notes.commander_id = commanders.id
+        WHERE ?1 IS NULL OR commanders.id = ?1 ORDER BY commanders.name
+      `).all(commanderIdFilter);
       const commanderStatuses = commanderRows.map((commander) => {
         const ownedCarriers = carriers.filter((carrier) => !carrier.is_decommissioned
           && carrier.commanders.some((link) => link.commander_id === commander.id && link.relationship === 'owner'));
@@ -374,10 +489,29 @@ export default defineStatModule({
         const fleetCarrierIds = getCarrierIds('FleetCarrier');
         const squadronCarrierIds = getCarrierIds('SquadronCarrier');
         const carrierStatus = [fleetCarrierIds.length > 0 && 'FC', squadronCarrierIds.length > 0 && 'SFC'].filter(Boolean).join(' + ') || 'None';
-        return { commanderId: commander.id, commanderName: commander.name, carrierStatus, fleetCarrierIds, squadronCarrierIds };
+        // Journals don't log the commander's own squadron ID, but a squadron carrier's callsign is its squadron's ID.
+        const squadronCarrier = commander.squadron_name ? carriers.find((carrier) => carrier.carrier_type === 'SquadronCarrier'
+          && !carrier.is_decommissioned
+          && carrier.commanders.some((link) => link.commander_id === commander.id)) : null;
+        return {
+          commanderId: commander.id,
+          commanderName: commander.name,
+          squadronName: commander.squadron_name,
+          commanderNote: commander.note,
+          squadronId: squadronCarrier?.callsign ?? null,
+          carrierStatus,
+          fleetCarrierIds,
+          squadronCarrierIds,
+        };
       });
+      return { carriers, commanderStatuses };
+    };
 
-      response.json({ carriers, commanderStatuses });
+    router.get('/', (request, response) => {
+      const commanderIdFilter = getCommanderIdFilter(request.query);
+      let overview = loadOverview(commanderIdFilter);
+      if (moveNotesToVisibleRows(overview.carriers, overview.commanderStatuses)) overview = loadOverview(commanderIdFilter);
+      response.json(overview);
     });
 
     // GET /api/stats/carriers/jumps?carrier=&commander=&period=&search=&limit=&offset=
@@ -431,6 +565,11 @@ export default defineStatModule({
     return router;
   },
 });
+
+function joinNotes(existingNote, addedNote) {
+  if (!existingNote || existingNote === addedNote) return addedNote;
+  return `${existingNote} · ${addedNote}`;
+}
 
 function normalizeFinance(financeData) {
   const taxRates = Object.fromEntries(

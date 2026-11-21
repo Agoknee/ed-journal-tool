@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { defineStatModule } from '../define-stat-module.mjs';
+import { getCommodityDisplayName } from '../commodity-names.mjs';
 import { DOCKING_EVENTS, getDockedLocation, trackDockingState } from '../docking-state.mjs';
 import { SqlFilter, addStandardFilters, getOrderByClause, getPagination, runPaginatedQuery } from '../query-helpers.mjs';
 
@@ -83,7 +84,7 @@ export default defineStatModule({
         stationName: dockedLocation?.stationName ?? null,
         starSystem: dockedLocation?.starSystem ?? null,
         commodity: data.Type,
-        commodityName: data.Type_Localised ?? toDisplayName(data.Type),
+        commodityName: getCommodityDisplayName(data.Type_Localised, data.Type),
         quantity,
         unitPrice: unitPrice ?? null,
         totalValue: (isPurchase ? data.TotalCost : data.TotalSale) ?? 0,
@@ -174,6 +175,3 @@ export default defineStatModule({
   },
 });
 
-function toDisplayName(internalName = '') {
-  return internalName.charAt(0).toUpperCase() + internalName.slice(1);
-}

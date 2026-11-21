@@ -3,9 +3,10 @@
  */
 import CopyableText from './CopyableText.jsx';
 
-export function Section({ title, actions, children, description }) {
+/** `id` makes the section a target for the sidebar's sub-section links. */
+export function Section({ id, title, actions, children, description }) {
   return (
-    <section className="section">
+    <section id={id} className="section">
       <header className="section-header">
         <div>
           <h2>{title}</h2>

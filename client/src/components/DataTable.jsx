@@ -1,11 +1,13 @@
 /**
  * Table with optional server-side sorting and pagination.
  *
- * columns: [{ key, label, render?(row), sortKey?, align?, wrap? }]  (wrap lets long text wrap instead of widening the table)
+ * columns: [{ key, label, render?(row), sortKey?, align?, wrap?, shrink?, className? }]  (wrap lets long text wrap instead of widening the table;
+ *   shrink keeps the column at its content width instead of sharing the table's spare width)
+ * rowClassName?(row): extra class names for a row
  * pagination: { total, limit, offset, onOffsetChange }
  * sorting: { sort, order, onSortChange(sortKey) }
  */
-export default function DataTable({ columns, rows, rowKey = 'id', pagination, sorting, onRowClick, emptyMessage = 'No rows.', isLoading }) {
+export default function DataTable({ columns, rows, rowKey = 'id', rowClassName, pagination, sorting, onRowClick, emptyMessage = 'No rows.', isLoading }) {
   return (
     <div className={`table-wrapper ${isLoading ? 'is-loading' : ''}`}>
       <div className="table-scroll">
@@ -13,7 +15,7 @@ export default function DataTable({ columns, rows, rowKey = 'id', pagination, so
           <thead>
             <tr>
               {columns.map((column) => (
-                <th key={column.key} className={column.align === 'right' ? 'align-right' : undefined}>
+                <th key={column.key} className={getCellClassName(column)}>
                   {column.sortKey && sorting ? (
                     <button type="button" className="sort-button" onClick={() => sorting.onSortChange(column.sortKey)}>
                       {column.label}
@@ -31,7 +33,7 @@ export default function DataTable({ columns, rows, rowKey = 'id', pagination, so
             {rows.map((row, rowIndex) => (
               <tr
                 key={row[rowKey] ?? rowIndex}
-                className={onRowClick ? 'clickable-row' : undefined}
+                className={[onRowClick && 'clickable-row', rowClassName?.(row)].filter(Boolean).join(' ') || undefined}
                 onClick={onRowClick ? () => onRowClick(row) : undefined}
               >
                 {columns.map((column) => (
@@ -68,7 +70,7 @@ function Pagination({ total, limit, offset, onOffsetChange }) {
 }
 
 function getCellClassName(column) {
-  const classNames = [column.align === 'right' && 'align-right', column.wrap && 'wrap-cell'].filter(Boolean);
+  const classNames = [column.align === 'right' && 'align-right', column.wrap && 'wrap-cell', column.shrink && 'shrink-cell', column.className].filter(Boolean);
   return classNames.length > 0 ? classNames.join(' ') : undefined;
 }
 

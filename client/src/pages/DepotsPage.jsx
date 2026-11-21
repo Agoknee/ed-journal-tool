@@ -4,7 +4,7 @@ import FilterBar from '../components/FilterBar.jsx';
 import { useListFilters, usePagedRows, useTableState } from '../hooks/use-list-filters.js';
 import { LoadingState, Section, StatCard, StatGrid } from '../components/ui.jsx';
 import { useApi } from '../hooks/use-api.js';
-import { formatDateTime, formatNumber } from '../format.js';
+import { formatDateTime, formatNumber, formatSystemName } from '../format.js';
 
 const CARRIERS_PER_PAGE = 10;
 
@@ -67,7 +67,7 @@ export default function DepotsPage({ commanderFilter }) {
         </LoadingState>
       </Section>
 
-      <Section title="Deposits">
+      <Section id="depot-history" title="Deposits">
         <DataTable
           isLoading={depositsRequest.isLoading}
           rows={depositsRequest.data?.rows ?? []}
@@ -77,7 +77,7 @@ export default function DepotsPage({ commanderFilter }) {
             { key: 'timestamp', label: 'Time', sortKey: 'timestamp', render: (deposit) => formatDateTime(deposit.timestamp) },
             { key: 'commander_name', label: 'Commander' },
             { key: 'carrier_name', label: 'Carrier', sortKey: 'carrier' },
-            { key: 'star_system', label: 'System' },
+            { key: 'star_system', label: 'System', render: (row) => formatSystemName(row.star_system) ?? '—' },
             { key: 'amount', label: 'Amount (t)', align: 'right', sortKey: 'amount' },
             { key: 'carrier_fuel_total', label: 'Depot total (t)', align: 'right' },
           ]}

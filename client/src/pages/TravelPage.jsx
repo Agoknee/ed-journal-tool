@@ -4,7 +4,7 @@ import FilterBar from '../components/FilterBar.jsx';
 import { Badge, LoadingState, Section, StatCard, StatGrid } from '../components/ui.jsx';
 import { useApi } from '../hooks/use-api.js';
 import { useListFilters, useTableState } from '../hooks/use-list-filters.js';
-import { formatDateTime, formatLightYears, formatNumber } from '../format.js';
+import { formatDateTime, formatLightYears, formatNumber, formatSystemName } from '../format.js';
 
 const JUMP_TYPE_OPTIONS = [
   { value: '', label: 'All jumps' },
@@ -66,7 +66,7 @@ export default function TravelPage({ commanderFilter }) {
         )}
       </LoadingState>
 
-      <h3 className="subheading">Jump history</h3>
+      <h3 id="travel-history" className="subheading">Jump history</h3>
       <DataTable
         isLoading={jumpsRequest.isLoading}
         rows={jumpsRequest.data?.rows ?? []}
@@ -76,8 +76,8 @@ export default function TravelPage({ commanderFilter }) {
           { key: 'timestamp', label: 'Time', sortKey: 'timestamp', render: (row) => formatDateTime(row.timestamp) },
           { key: 'commander_name', label: 'Commander' },
           { key: 'jump_type', label: 'Type', render: renderJumpType },
-          { key: 'from_system', label: 'From' },
-          { key: 'star_system', label: 'To', sortKey: 'system' },
+          { key: 'from_system', label: 'From', render: (row) => formatSystemName(row.from_system) ?? '—' },
+          { key: 'star_system', label: 'To', sortKey: 'system', render: (row) => formatSystemName(row.star_system) ?? '—' },
           { key: 'jump_distance', label: 'Distance', align: 'right', sortKey: 'distance', render: (row) => formatLightYears(row.jump_distance) },
           { key: 'fuel_used', label: 'Fuel', align: 'right', render: (row) => (row.fuel_used === null ? '—' : `${formatNumber(row.fuel_used)} t`) },
         ]}

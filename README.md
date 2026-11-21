@@ -10,8 +10,10 @@ Journal files are only ever opened read-only.
 npm install
 npm run client:install
 npm run build          # builds the dashboard into client/dist
-npm start              # or: node src/index.mjs --help
-npm run dist           # builds dist/ed-journal-tool-<version>-linux and -win.exe (client included)
+npm start              # serves the dashboard from source with Vite (hot reload)
+npm run start:built    # serves the built dashboard from client/dist (run npm run build first)
+npm run debug          # same as npm start, with verbose logging (npm run debug:built for the built dashboard)
+npm run dist           # builds dist/ed-journal-tool-<version> (Linux) and .exe (Windows), client included
 ```
 
 Then open http://localhost:4267.
@@ -25,11 +27,25 @@ Then open http://localhost:4267.
 | `-d, --debug` | `false` | Verbose logging |
 | `-j, --journaldir` | `%USERPROFILE%/Saved Games/Frontier Developments/Elite Dangerous` | Journal directory |
 | `--database` | `%LOCALAPPDATA%/edjt/journals.db` (`~/.local/share/edjt` on Linux) | SQLite database path |
+| `--dev-client` | `false` | Serve the dashboard from client source with Vite (hot reload); used by `npm start` |
 | `--rebuild-stats` | `false` | Clear and rebuild all stats from stored entries |
 
 ### Client development
 
-Run the server, then `npm run client:dev` for Vite with hot reload (it proxies `/api` to port 4267; set `API_SERVER_URL` to change that).
+`npm start` runs Vite inside the server, so the dashboard and API share port 4267 with hot reload. Alternatively, run `npm run start:built` and `npm run client:dev` for a standalone Vite server that proxies `/api` to port 4267 (set `API_SERVER_URL` to change that).
+
+### Standalone executables
+
+`npm run dist` writes to `dist/`:
+
+- `ed-journal-tool-<version>.exe` (Windows), with the app icon and version details (from `packaging/edjt.ico` and `package.json`).
+- `ed-journal-tool-<version>` (Linux), plus `ed-journal-tool.desktop` and `ed-journal-tool.png` for a menu entry. To install for the current user:
+
+  ```sh
+  install -Dm755 ed-journal-tool-<version> ~/.local/bin/ed-journal-tool-<version>
+  install -Dm644 ed-journal-tool.png ~/.local/share/icons/hicolor/256x256/apps/ed-journal-tool.png
+  install -Dm644 ed-journal-tool.desktop ~/.local/share/applications/ed-journal-tool.desktop
+  ```
 
 ## How it works
 

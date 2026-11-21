@@ -1,22 +1,62 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useLiveUpdates } from './hooks/live-updates-context.js';
 import { useApi } from './hooks/use-api.js';
+import NavIcon from './components/NavIcon.jsx';
 import CarriersPage from './pages/CarriersPage.jsx';
 import ChatPage from './pages/ChatPage.jsx';
 import CommandersPage from './pages/CommandersPage.jsx';
-import CommoditiesPage from './pages/CommoditiesPage.jsx';
+import TradePage from './pages/TradePage.jsx';
 import TravelPage from './pages/TravelPage.jsx';
 import DepotsPage from './pages/DepotsPage.jsx';
 import JournalsPage from './pages/JournalsPage.jsx';
 
+// Sub-sections are listed under the active page in the sidebar. Each scrolls to the element with
+// its targetId, or to the top of the page when there's none.
 const PAGES = [
   { id: 'commanders', label: 'Commanders', component: CommandersPage },
-  { id: 'travel', label: 'Travel', component: TravelPage },
-  { id: 'carriers', label: 'Carriers', component: CarriersPage },
-  { id: 'commodities', label: 'Commodities', component: CommoditiesPage },
-  { id: 'depots', label: 'Depots', component: DepotsPage },
+  {
+    id: 'carriers',
+    label: 'Carriers',
+    component: CarriersPage,
+    subSections: [
+      { label: 'Overview' },
+      { label: 'Details', targetId: 'carrier-details' },
+      { label: 'Jump History', targetId: 'carrier-jump-history' },
+      { label: 'Bank History', targetId: 'carrier-bank-history' },
+    ],
+  },
+  {
+    id: 'travel',
+    label: 'Travel',
+    component: TravelPage,
+    subSections: [
+      { label: 'Overview' },
+      { label: 'History', targetId: 'travel-history' },
+    ],
+  },
+  {
+    id: 'trade',
+    label: 'Trade',
+    component: TradePage,
+    subSections: [
+      { label: 'Overview' },
+      { label: 'Commodities', targetId: 'trade-commodities' },
+      { label: 'Markets', targetId: 'trade-markets' },
+      { label: 'History', targetId: 'trade-history' },
+    ],
+  },
+  {
+    id: 'depots',
+    label: 'Depots',
+    component: DepotsPage,
+    subSections: [
+      { label: 'Overview' },
+      { label: 'History', targetId: 'depot-history' },
+    ],
+  },
   { id: 'chat', label: 'Chat', component: ChatPage },
-  { id: 'journals', label: 'Journals', component: JournalsPage },
+  // Opened from the connection status at the bottom of the sidebar instead of the nav.
+  { id: 'journals', label: 'Journals', component: JournalsPage, isHiddenFromNav: true },
 ];
 
 const COMMANDER_STORAGE_KEY = 'selectedCommander';
@@ -24,6 +64,66 @@ const COMMANDER_STORAGE_KEY = 'selectedCommander';
 function getPageIdFromHash() {
   const hashPageId = window.location.hash.replace('#/', '').replace('#', '');
   return PAGES.some((page) => page.id === hashPageId) ? hashPageId : PAGES[0].id;
+}
+
+// A sub-section counts as current once its heading has scrolled within this distance of the top.
+const SUB_SECTION_ACTIVE_OFFSET_PX = 80;
+
+/**
+ * Index of the sub-section the page is scrolled to: the last one whose heading has reached the top.
+ * At the very bottom of the page, the last heading that's on screen wins, since sections near the
+ * end can't scroll up to the top.
+ */
+function findCurrentSubSectionIndex(subSections) {
+  const isAtBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2;
+  const threshold = isAtBottom ? window.innerHeight : SUB_SECTION_ACTIVE_OFFSET_PX;
+  let currentIndex = 0;
+  subSections.forEach((subSection, index) => {
+    const target = subSection.targetId && document.getElementById(subSection.targetId);
+    if (target && target.getBoundingClientRect().top <= threshold) currentIndex = index;
+  });
+  return currentIndex;
+}
+
+/**
+ * Tracks the current sub-section. It's re-checked after the page renders (so switching pages starts
+ * fresh), on scroll and resize, and whenever the page's height changes as its data loads.
+ */
+function useCurrentSubSectionIndex(subSections) {
+  const [currentIndex, setCurrentIndex] = useState(0);
+  useEffect(() => {
+    if (!subSections) return undefined;
+    let frameId = null;
+    const scheduleUpdate = () => {
+      if (frameId !== null) return;
+      frameId = requestAnimationFrame(() => {
+        frameId = null;
+        setCurrentIndex(findCurrentSubSectionIndex(subSections));
+      });
+    };
+    scheduleUpdate();
+    window.addEventListener('scroll', scheduleUpdate, { passive: true });
+    window.addEventListener('resize', scheduleUpdate);
+    const resizeObserver = new ResizeObserver(scheduleUpdate);
+    resizeObserver.observe(document.body);
+    return () => {
+      cancelAnimationFrame(frameId);
+      window.removeEventListener('scroll', scheduleUpdate);
+      window.removeEventListener('resize', scheduleUpdate);
+      resizeObserver.disconnect();
+    };
+  }, [subSections]);
+  return currentIndex;
+}
+
+/** Scrolls to a sub-section of the current page, or to the top without a target. */
+function scrollToSubSection(targetId) {
+  if (!targetId) {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    return;
+  }
+  // The target may not exist yet while its data is still loading.
+  document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function readStoredCommander() {
@@ -39,12 +139,28 @@ export default function App() {
   const [selectedCommander, setSelectedCommander] = useState(readStoredCommander);
   const commandersRequest = useApi('/api/commanders', {}, ['journals', 'stats']);
   const commanders = commandersRequest.data?.commanders ?? [];
+  // The sidebar is a slide-in menu on narrow screens; this is whether it's open there.
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
 
   useEffect(() => {
-    const handleHashChange = () => setActivePageId(getPageIdFromHash());
+    // Each page opens at the top rather than at the previous page's scroll position.
+    const handleHashChange = () => {
+      setActivePageId(getPageIdFromHash());
+      setIsMenuOpen(false);
+      window.scrollTo(0, 0);
+    };
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
   }, []);
+
+  useEffect(() => {
+    if (!isMenuOpen) return undefined;
+    const handleKeyDown = (keyEvent) => {
+      if (keyEvent.key === 'Escape') setIsMenuOpen(false);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isMenuOpen]);
 
   const selectCommander = (commanderValue) => {
     setSelectedCommander(commanderValue);
@@ -60,25 +176,48 @@ export default function App() {
   const commanderFilter = isKnownCommander || commanders.length === 0 ? selectedCommander : 'all';
 
   const ActivePage = PAGES.find((page) => page.id === activePageId).component;
+  const currentSubSectionIndex = useCurrentSubSectionIndex(PAGES.find((page) => page.id === activePageId).subSections);
+  const activeJournalCount = commandersRequest.data
+    ? commanders.reduce((total, commander) => total + commander.active_journal_count, 0)
+    : null;
 
   return (
     <div className="app">
-      <aside className="sidebar">
+      <MobileHeader isMenuOpen={isMenuOpen} onToggleMenu={() => setIsMenuOpen(!isMenuOpen)} activeJournalCount={activeJournalCount} />
+      {isMenuOpen && <div className="sidebar-backdrop" onClick={() => setIsMenuOpen(false)} />}
+      <aside id="sidebar" className={isMenuOpen ? 'sidebar sidebar-open' : 'sidebar'}>
         <div className="brand">
-          <span className="brand-mark">◆</span>
+          <img className="brand-mark" src="/edjt-logo.svg" alt="" width="55" height="55" />
           <div>
-            <div className="brand-title">Journal Tool <span className="brand-version">v{__APP_VERSION__}</span></div>
-            <div className="brand-subtitle">Elite Dangerous</div>
+            <div className="brand-title">ED Journal Tool</div>
+            <div className="brand-version">v{__APP_VERSION__}</div>
           </div>
         </div>
         <nav className="nav">
-          {PAGES.map((page) => (
-            <a key={page.id} href={`#/${page.id}`} className={page.id === activePageId ? 'nav-link nav-link-active' : 'nav-link'}>
-              {page.label}
-            </a>
+          {PAGES.filter((page) => !page.isHiddenFromNav).map((page) => (
+            <Fragment key={page.id}>
+              <a href={`#/${page.id}`} className={page.id === activePageId ? 'nav-link nav-link-active' : 'nav-link'}>
+                <NavIcon name={page.id} />
+                {page.label}
+              </a>
+              {page.id === activePageId && page.subSections?.map((subSection, index) => (
+                <button
+                  key={subSection.label}
+                  type="button"
+                  className={index === currentSubSectionIndex ? 'nav-sublink nav-sublink-current' : 'nav-sublink'}
+                  aria-current={index === currentSubSectionIndex ? 'location' : undefined}
+                  onClick={() => {
+                    setIsMenuOpen(false);
+                    scrollToSubSection(subSection.targetId);
+                  }}
+                >
+                  {subSection.label}
+                </button>
+              ))}
+            </Fragment>
           ))}
         </nav>
-        <ConnectionStatus />
+        <ConnectionStatus isActive={activePageId === 'journals'} activeJournalCount={activeJournalCount} />
       </aside>
 
       <main className="main">
@@ -87,7 +226,7 @@ export default function App() {
           <label className="commander-select">
             <span>Commander</span>
             <select value={commanderFilter} onChange={(changeEvent) => selectCommander(changeEvent.target.value)}>
-              <option value="all">All commanders</option>
+              <option value="all">All Commanders</option>
               {commanders.map((commander) => (
                 <option key={commander.id} value={String(commander.id)}>CMDR {commander.name}</option>
               ))}
@@ -95,21 +234,77 @@ export default function App() {
           </label>
         </header>
         <ScanBanner />
+        <ClockBanner />
         <ActivePage commanderFilter={commanderFilter} commanders={commanders} />
       </main>
     </div>
   );
 }
 
-function ConnectionStatus() {
-  const { isConnected, lastUpdate } = useLiveUpdates();
+/** Status dot tone and text for the server connection and journal watch state. */
+function useConnectionState(activeJournalCount) {
+  const { isConnected } = useLiveUpdates();
+  if (isConnected && activeJournalCount > 0) return { statusTone: 'live', statusText: `Active Journals: ${activeJournalCount}` };
+  if (isConnected && activeJournalCount === 0) return { statusTone: 'warning', statusText: 'No Active Journals' };
+  if (isConnected) return { statusTone: 'warning', statusText: 'Connecting…' };
+  return { statusTone: 'danger', statusText: 'EDJT Not Running' };
+}
+
+/** On narrow screens: the bar with the menu button that replaces the always-visible sidebar. */
+function MobileHeader({ isMenuOpen, onToggleMenu, activeJournalCount }) {
+  const { statusTone, statusText } = useConnectionState(activeJournalCount);
   return (
-    <div className="connection-status">
-      <span className={isConnected ? 'status-dot status-dot-live' : 'status-dot'} />
+    <header className="mobile-header">
+      <button
+        type="button"
+        className="menu-button"
+        aria-label={isMenuOpen ? 'Close menu' : 'Open menu'}
+        aria-expanded={isMenuOpen}
+        aria-controls="sidebar"
+        onClick={onToggleMenu}
+      >
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+          {isMenuOpen ? <path d="M6 6l12 12M18 6L6 18" /> : <path d="M4 7h16M4 12h16M4 17h16" />}
+        </svg>
+      </button>
+      <img className="mobile-header-logo" src="/edjt-logo.svg" alt="" width="28" height="28" />
+      <span className="brand-title">ED Journal Tool</span>
+      <a href="#/journals" className="mobile-header-status" title={statusText} aria-label={statusText}>
+        <span className={`status-dot status-dot-${statusTone}`} />
+      </a>
+    </header>
+  );
+}
+
+/**
+ * Server connection and journal watch state; clicking it opens the Journals page. The count is null
+ * until the commander list has loaded.
+ */
+function ConnectionStatus({ activeJournalCount, isActive }) {
+  const { lastUpdate } = useLiveUpdates();
+  const { statusTone, statusText } = useConnectionState(activeJournalCount);
+
+  return (
+    <a href="#/journals" className={isActive ? 'connection-status connection-status-active' : 'connection-status'} title="Show journals">
+      <span className={`status-dot status-dot-${statusTone}`} />
       <div>
-        <div>{isConnected ? 'Live updates on' : 'Reconnecting…'}</div>
+        <div>{statusText}</div>
         {lastUpdate && <div className="muted small">Last update {new Date(lastUpdate.timestamp).toLocaleTimeString()}</div>}
       </div>
+    </a>
+  );
+}
+
+/** Warns when the server's clock is off from the game server's, since carrier timers depend on it. */
+function ClockBanner() {
+  const statusRequest = useApi('/api/status', {}, ['clock']);
+  const clockStatus = statusRequest.data?.clock;
+  if (!clockStatus?.isOff) return null;
+  const direction = clockStatus.offsetSeconds > 0 ? 'ahead of' : 'behind';
+  return (
+    <div className="notice notice-warning">
+      This computer's clock is about {Math.abs(clockStatus.offsetSeconds).toFixed(1)}s {direction} the game server, so carrier
+      jump and cooldown timers will be off by that much. Synchronize the system clock to fix it.
     </div>
   );
 }

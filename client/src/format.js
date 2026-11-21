@@ -64,3 +64,50 @@ export function formatShipName(shipType, shipName) {
   if (!shipType && !shipName) return '—';
   return shipName ? `${shipName} (${shipType})` : shipType;
 }
+
+/**
+ * Short designations shown with certain system names, e.g. "N0 (HIP 58832)".
+ * Matching ignores letter case and spacing.
+ */
+const SYSTEM_DESIGNATIONS = {
+  'HIP 58832': 'N0',
+  'HD 105341': 'N1',
+  'HD 104495': 'N2',
+  'HIP 57784': 'N3',
+  'HIP 57478': 'N4',
+  'HIP 56843': 'N5',
+  'HD 104392': 'N6',
+  'HD 102779': 'N7',
+  'HD 102000': 'N8',
+  'HD 104785': 'N9',
+  'HD 105548': 'N10',
+  'HD 107865': 'N11',
+  'Plaa Trua WQ-C d13-0': 'N12',
+  'Plaa Trua QL-B c27-0': 'N13',
+  'Wregoe OP-D b58-0': 'N14',
+  'Wregoe ZE-B c28-2': 'N15',
+  'Wregoe NA-W b57-4': 'N16',
+};
+
+const normalizeSystemName = (name) => name.trim().replace(/\s+/g, ' ').toLowerCase();
+const designationsByNormalizedName = new Map(
+  Object.entries(SYSTEM_DESIGNATIONS).map(([systemName, designation]) => [normalizeSystemName(systemName), designation]),
+);
+
+/** The designation for a system name, or for a body name that starts with one ("HIP 57784 1 b" -> "N3"). */
+export function getSystemDesignation(name) {
+  if (!name) return null;
+  const normalizedName = normalizeSystemName(name);
+  const exactMatch = designationsByNormalizedName.get(normalizedName);
+  if (exactMatch) return exactMatch;
+  for (const [systemName, designation] of designationsByNormalizedName) {
+    if (normalizedName.startsWith(`${systemName} `)) return designation;
+  }
+  return null;
+}
+
+/** "HIP 58832" -> "N0 (HIP 58832)"; other names, and null/undefined, are returned unchanged. */
+export function formatSystemName(name) {
+  const designation = getSystemDesignation(name);
+  return designation ? `${designation} (${name})` : name;
+}

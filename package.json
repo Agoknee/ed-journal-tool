@@ -12,8 +12,10 @@
     "node": ">=26.0.0"
   },
   "scripts": {
-    "start": "node src/index.mjs",
-    "debug": "node src/index.mjs --debug",
+    "start": "node src/index.mjs --dev-client",
+    "start:built": "node src/index.mjs",
+    "debug": "node src/index.mjs --debug --dev-client",
+    "debug:built": "node src/index.mjs --debug",
     "client:install": "npm install --prefix client",
     "client:dev": "npm run dev --prefix client",
     "client:build": "npm run build --prefix client",
@@ -29,7 +31,9 @@
   },
   "devDependencies": {
     "@yao-pkg/pkg": "^6.25.0",
-    "esbuild": "^0.28.2"
+    "@yao-pkg/pkg-fetch": "^3.6.7",
+    "esbuild": "^0.28.2",
+    "resedit": "^3.1.1"
   },
   "pkg": {
     "assets": [
