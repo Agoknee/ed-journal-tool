@@ -209,7 +209,7 @@ function SqlConsoleSection() {
 
   return (
     <Section
-      title="SQL query"
+      title="SQL Query"
       description="Runs on a read-only connection. Results are limited to 1,000 rows. Use json_extract(data, '$.Field') to read journal fields."
       actions={(
         <>
@@ -287,9 +287,9 @@ function StatModulesSection() {
 
   return (
     <Section
-      title="Stat modules"
+      title="Stat Modules"
       description="Each module parses specific journal events into its own tables and only processes new entries."
-      actions={<button type="button" disabled={Boolean(rebuildingModule)} onClick={() => rebuild()}>Rebuild all</button>}
+      actions={<button type="button" disabled={Boolean(rebuildingModule)} onClick={() => rebuild()}>Rebuild All</button>}
     >
       <LoadingState requestState={modulesRequest}>
         {({ modules }) => (
