@@ -75,6 +75,12 @@ export const coreSchemaSql = `
     updated_at    TEXT NOT NULL
   );
 
+  -- BGS ticks seen by the tick monitor. Not derivable from journals, so never cleared by stat rebuilds.
+  CREATE TABLE IF NOT EXISTS bgs_ticks (
+    tick_time      TEXT PRIMARY KEY,   -- journal-style UTC timestamp, e.g. 2026-11-20T16:52:46Z
+    first_seen_at  TEXT NOT NULL
+  );
+
   -- Small key/value store for stat modules that need to remember state between entries.
   CREATE TABLE IF NOT EXISTS stat_state (
     module_name    TEXT NOT NULL,

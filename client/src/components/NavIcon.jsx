@@ -46,6 +46,15 @@ const ICON_PATHS = {
       <path d="M14 9h2a1.5 1.5 0 0 1 1.5 1.5V16a1.5 1.5 0 0 0 3 0V7.5L18 5" />
     </>
   ),
+  // Targeting reticle: outer ring, inner ring, crosshair ticks and a center dot
+  bgs: (
+    <>
+      <circle className="nav-icon-fill" cx="12" cy="12" r="8" />
+      <circle cx="12" cy="12" r="3.5" />
+      <path d="M12 1.5v5M12 17.5v5M1.5 12h5M17.5 12h5" />
+      <circle cx="12" cy="12" r="0.6" fill="currentColor" />
+    </>
+  ),
   // Comms satellite sending a signal
   chat: (
     <>

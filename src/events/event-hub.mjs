@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 
 /**
- * Broadcasts application updates (journal changes, stats changes, scan progress, clock checks, notes)
+ * Broadcasts application updates (journal changes, stats changes, scan progress, clock checks, notes, BGS ticks)
  * to listeners such as the server-sent events endpoint.
  */
 export class EventHub extends EventEmitter {
@@ -11,7 +11,7 @@ export class EventHub extends EventEmitter {
   }
 
   /**
-   * @param {'journals' | 'stats' | 'scan' | 'clock' | 'notes'} topic
+   * @param {'journals' | 'stats' | 'scan' | 'clock' | 'notes' | 'ticks'} topic
    * @param {object} payload
    */
   publish(topic, payload = {}) {

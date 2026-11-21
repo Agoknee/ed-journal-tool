@@ -278,7 +278,9 @@ function CarrierOverviewTable({ commanderStatuses, carriers, includeCommandersWi
             const jumpState = getJumpState(carrier, now);
             if (!jumpState) return '—';
             const countdown = formatCountdown(jumpState.endsAt, now);
-            return <CopyableText copyText={countdown}>{countdown}</CopyableText>;
+            // Copied as a Discord relative timestamp, which shows "in X minutes" and counts down for each reader.
+            const discordTimestamp = `<t:${Math.floor(Date.parse(jumpState.endsAt) / 1000)}:R>`;
+            return <CopyableText copyText={discordTimestamp}>{countdown}</CopyableText>;
           },
         },
         { key: 'fuel', label: 'Fuel', sortValue: ({ carrier }) => carrier?.fuel_level, align: 'right', shrink: true, className: 'overview-gap-cell', render: ({ carrier }) => (carrier?.fuel_level == null ? '—' : `${formatNumber(carrier.fuel_level)} t`) },

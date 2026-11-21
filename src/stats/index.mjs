@@ -6,6 +6,7 @@
  * Modules run in this order, so list dependencies (e.g. "markets") first.
  */
 import assetsModule from './modules/assets.mjs';
+import bgsModule from './modules/bgs.mjs';
 import carriersModule from './modules/carriers.mjs';
 import chatModule from './modules/chat.mjs';
 import commandersModule from './modules/commanders.mjs';
@@ -23,4 +24,5 @@ export const statModules = [
   commoditiesModule,
   fuelDepositsModule,
   chatModule,
+  bgsModule,
 ];

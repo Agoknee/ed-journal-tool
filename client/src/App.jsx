@@ -1,7 +1,10 @@
 import { Fragment, useEffect, useState } from 'react';
 import { useLiveUpdates } from './hooks/live-updates-context.js';
 import { useApi } from './hooks/use-api.js';
+import { copyToClipboard } from './clipboard.js';
+import { formatDateTime, formatRelativeTime } from './format.js';
 import NavIcon from './components/NavIcon.jsx';
+import BgsPage from './pages/BgsPage.jsx';
 import CarriersPage from './pages/CarriersPage.jsx';
 import ChatPage from './pages/ChatPage.jsx';
 import CommandersPage from './pages/CommandersPage.jsx';
@@ -52,6 +55,17 @@ const PAGES = [
     subSections: [
       { label: 'Overview' },
       { label: 'History', targetId: 'depot-history' },
+    ],
+  },
+  {
+    id: 'bgs',
+    label: 'BGS',
+    // Shown at the top of the page; the sidebar keeps the short label.
+    title: 'Background Simulation',
+    component: BgsPage,
+    subSections: [
+      { label: 'Activity' },
+      { label: 'Tick History', targetId: 'bgs-tick-history' },
     ],
   },
   { id: 'chat', label: 'Chat', component: ChatPage },
@@ -175,8 +189,9 @@ export default function App() {
   const isKnownCommander = selectedCommander === 'all' || commanders.some((commander) => String(commander.id) === selectedCommander);
   const commanderFilter = isKnownCommander || commanders.length === 0 ? selectedCommander : 'all';
 
-  const ActivePage = PAGES.find((page) => page.id === activePageId).component;
-  const currentSubSectionIndex = useCurrentSubSectionIndex(PAGES.find((page) => page.id === activePageId).subSections);
+  const activePage = PAGES.find((page) => page.id === activePageId);
+  const ActivePage = activePage.component;
+  const currentSubSectionIndex = useCurrentSubSectionIndex(activePage.subSections);
   const activeJournalCount = commandersRequest.data
     ? commanders.reduce((total, commander) => total + commander.active_journal_count, 0)
     : null;
@@ -217,12 +232,13 @@ export default function App() {
             </Fragment>
           ))}
         </nav>
+        <LastTick />
         <ConnectionStatus isActive={activePageId === 'journals'} activeJournalCount={activeJournalCount} />
       </aside>
 
       <main className="main">
         <header className="topbar">
-          <h1>{PAGES.find((page) => page.id === activePageId).label}</h1>
+          <h1>{activePage.title ?? activePage.label}</h1>
           <label className="commander-select">
             <span>Commander</span>
             <select value={commanderFilter} onChange={(changeEvent) => selectCommander(changeEvent.target.value)}>
@@ -250,6 +266,97 @@ function useConnectionState(activeJournalCount) {
   return { statusTone: 'danger', statusText: 'EDJT Not Running' };
 }
 
+const TICK_AGE_REFRESH_MS = 60 * 1000;
+
+/**
+ * The latest BGS tick the server has seen, and how long ago it was (re-rendered each minute so the
+ * age stays current). tickTime is null until a tick has been seen.
+ */
+function useLastTick() {
+  const ticksRequest = useApi('/api/stats/bgs/ticks', {}, ['ticks']);
+  const [, setRefreshCount] = useState(0);
+  useEffect(() => {
+    const refreshTimer = setInterval(() => setRefreshCount((count) => count + 1), TICK_AGE_REFRESH_MS);
+    return () => clearInterval(refreshTimer);
+  }, []);
+  const tickTime = ticksRequest.data?.ticks?.[0] ?? null;
+  return {
+    isLoaded: Boolean(ticksRequest.data),
+    tickTime,
+    age: tickTime ? formatRelativeTime(tickTime) : null,
+    shortTime: tickTime ? formatShortTickTime(tickTime) : null,
+  };
+}
+
+/** The tick's local time of day, or its date when it was more than a day ago. */
+function formatShortTickTime(tickTime) {
+  const tickDate = new Date(tickTime);
+  return Date.now() - tickDate.getTime() < 24 * 60 * 60 * 1000
+    ? tickDate.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    : tickDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+const COPIED_MESSAGE_MS = 1200;
+
+/**
+ * Copies the tick as a Discord timestamp ("<t:1795193566:t>", time only), which Discord shows in each reader's
+ * own time zone. copyStatus is null, 'copied' or 'failed' for a moment after a click.
+ */
+function useTickCopy(tickTime) {
+  const [copyStatus, setCopyStatus] = useState(null);
+  useEffect(() => {
+    if (!copyStatus) return undefined;
+    const resetTimer = setTimeout(() => setCopyStatus(null), COPIED_MESSAGE_MS);
+    return () => clearTimeout(resetTimer);
+  }, [copyStatus]);
+  const copyTick = async () => {
+    const discordTimestamp = `<t:${Math.floor(Date.parse(tickTime) / 1000)}:t>`;
+    setCopyStatus((await copyToClipboard(discordTimestamp)) ? 'copied' : 'failed');
+  };
+  return { copyStatus, copyTick };
+}
+
+function getTickTitle(tickTime) {
+  return `Last BGS tick: ${formatDateTime(tickTime)}\nClick to copy as a Discord timestamp`;
+}
+
+/** Sidebar: the last BGS tick, above the connection status. Clicking copies a Discord timestamp. */
+function LastTick() {
+  const { isLoaded, tickTime, age, shortTime } = useLastTick();
+  const { copyStatus, copyTick } = useTickCopy(tickTime);
+  if (!isLoaded) return null;
+  if (!tickTime) {
+    return (
+      <div className="last-tick" title="No BGS tick seen yet">
+        <span className="last-tick-label">Last Tick</span>
+        <span className="last-tick-value">Not seen yet</span>
+      </div>
+    );
+  }
+  return (
+    <button type="button" className="last-tick" title={getTickTitle(tickTime)} onClick={copyTick}>
+      <span className="last-tick-label">Last Tick</span>
+      <span className="last-tick-value">
+        {copyStatus
+          ? <span className={`copy-status-text copy-status-text-${copyStatus}`}>{copyStatus === 'copied' ? 'Copied' : 'Copy failed'}</span>
+          : <>{shortTime} <span className="muted">({age.replace(/ ago$/, '')})</span></>}
+      </span>
+    </button>
+  );
+}
+
+/** Mobile header: a compact tick age beside the status dot. Tapping copies a Discord timestamp. */
+function MobileLastTick() {
+  const { tickTime, age } = useLastTick();
+  const { copyStatus, copyTick } = useTickCopy(tickTime);
+  if (!tickTime) return null;
+  return (
+    <button type="button" className="mobile-header-tick" title={getTickTitle(tickTime)} onClick={copyTick}>
+      {copyStatus === 'copied' ? 'Copied' : copyStatus === 'failed' ? 'Copy failed' : `Last Tick ${age}`}
+    </button>
+  );
+}
+
 /** On narrow screens: the bar with the menu button that replaces the always-visible sidebar. */
 function MobileHeader({ isMenuOpen, onToggleMenu, activeJournalCount }) {
   const { statusTone, statusText } = useConnectionState(activeJournalCount);
@@ -269,6 +376,7 @@ function MobileHeader({ isMenuOpen, onToggleMenu, activeJournalCount }) {
       </button>
       <img className="mobile-header-logo" src="/edjt-logo.svg" alt="" width="32" height="32" />
       <span className="brand-title">ED Journal Tool</span>
+      <MobileLastTick />
       <a href="#/journals" className="mobile-header-status" title={statusText} aria-label={statusText}>
         <span className={`status-dot status-dot-${statusTone}`} />
       </a>

@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { appVersion, parseCommandLineOptions, projectRootPath } from './cli.mjs';
+import { TickMonitor } from './bgs-ticks.mjs';
 import { ClockMonitor } from './clock-check.mjs';
 import { openDatabase } from './database/database.mjs';
 import { EventHub } from './events/event-hub.mjs';
@@ -40,6 +41,7 @@ export async function startApp() {
   const ingester = new JournalIngester({ database, journalDirectory: options.journaldir });
   const journalMonitor = new JournalMonitor({ ingester, statsEngine, eventHub });
   const clockMonitor = new ClockMonitor({ eventHub });
+  const tickMonitor = new TickMonitor({ database, eventHub });
 
   const app = createServer({
     database,
@@ -75,6 +77,7 @@ export async function startApp() {
   });
 
   clockMonitor.start();
+  tickMonitor.start();
   await journalMonitor.scanJournalDirectory();
   journalMonitor.start();
 
@@ -85,6 +88,7 @@ export async function startApp() {
     logger.info('Shutting down...');
     await journalMonitor.stop();
     clockMonitor.stop();
+    tickMonitor.stop();
     await viteServer?.close();
     httpServer.closeAllConnections();
     httpServer.close();

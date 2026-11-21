@@ -3,7 +3,7 @@ import { LiveUpdatesContext } from './live-updates-context.js';
 
 /** Refreshes are throttled so a busy play session doesn't refetch on every journal line. */
 const REFRESH_THROTTLE_MS = 1500;
-const UPDATE_TOPICS = ['journals', 'stats', 'scan', 'clock', 'notes'];
+const UPDATE_TOPICS = ['journals', 'stats', 'scan', 'clock', 'notes', 'ticks'];
 
 /**
  * Subscribes to the server's event stream (/api/events) and exposes a version counter per topic.
