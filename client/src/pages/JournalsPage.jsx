@@ -3,7 +3,7 @@ import { postJson } from '../api.js';
 import DataTable from '../components/DataTable.jsx';
 import FilterBar from '../components/FilterBar.jsx';
 import SearchInput from '../components/SearchInput.jsx';
-import { useListFilters, usePagedRows, useTableState } from '../hooks/use-list-filters.js';
+import { useListFilters, useTableState } from '../hooks/use-list-filters.js';
 import { Badge, LoadingState, Section, StatCard, StatGrid } from '../components/ui.jsx';
 import { useApi } from '../hooks/use-api.js';
 import { formatBytes, formatDateTime, formatNumber, formatRelativeTime } from '../format.js';
@@ -12,11 +12,11 @@ const JOURNAL_TOPICS = ['journals', 'stats'];
 const STATUS_TONES = { ok: 'live', pending: 'warning', corrupt: 'danger' };
 
 const EXAMPLE_QUERIES = [
-  { label: 'Events by count', query: 'SELECT event, COUNT(*) AS count\nFROM journal_entries\nGROUP BY event\nORDER BY count DESC\nLIMIT 50;' },
-  { label: 'Latest 50 entries', query: 'SELECT id, timestamp, event, data\nFROM journal_entries\nORDER BY id DESC\nLIMIT 50;' },
-  { label: 'Bounties by commander', query: "SELECT commanders.name, COUNT(*) AS bounties,\n  SUM(json_extract(data, '$.TotalReward')) AS total_reward\nFROM journal_entries\nJOIN commanders ON commanders.id = journal_entries.commander_id\nWHERE event = 'Bounty'\nGROUP BY commanders.name;" },
-  { label: 'Corrupt journal files', query: "SELECT file_name, status_reason, file_size, line_count\nFROM journal_files\nWHERE status = 'corrupt'\nORDER BY sort_key DESC;" },
-  { label: 'Known carriers', query: 'SELECT * FROM market_directory\nWHERE is_carrier = 1\nORDER BY last_seen DESC;' },
+  { label: 'Events by Count', query: 'SELECT event, COUNT(*) AS count\nFROM journal_entries\nGROUP BY event\nORDER BY count DESC\nLIMIT 50;' },
+  { label: 'Latest 50 Entries', query: 'SELECT id, timestamp, event, data\nFROM journal_entries\nORDER BY id DESC\nLIMIT 50;' },
+  { label: 'Bounties by Commander', query: "SELECT commanders.name, COUNT(*) AS bounties,\n  SUM(json_extract(data, '$.TotalReward')) AS total_reward\nFROM journal_entries\nJOIN commanders ON commanders.id = journal_entries.commander_id\nWHERE event = 'Bounty'\nGROUP BY commanders.name;" },
+  { label: 'Corrupt Journal Files', query: "SELECT file_name, status_reason, file_size, line_count\nFROM journal_files\nWHERE status = 'corrupt'\nORDER BY sort_key DESC;" },
+  { label: 'Known Carriers', query: 'SELECT * FROM market_directory\nWHERE is_carrier = 1\nORDER BY last_seen DESC;' },
 ];
 
 export default function JournalsPage({ commanderFilter }) {
@@ -49,10 +49,9 @@ const EVENTS_PER_PAGE = 10;
 
 function JournalSummarySection({ commanderFilter, onSelectFile }) {
   const summaryRequest = useApi('/api/journals/summary', { commander: commanderFilter }, JOURNAL_TOPICS);
-  const eventPage = usePagedRows(summaryRequest.data?.topEvents ?? [], { pageSize: EVENTS_PER_PAGE, resetKey: commanderFilter });
   return (
     <LoadingState requestState={summaryRequest}>
-      {({ summary, activeFiles }) => (
+      {({ summary, activeFiles, topEvents }) => (
         <>
           <Section title="Overview">
             <StatGrid>
@@ -66,8 +65,9 @@ function JournalSummarySection({ commanderFilter, onSelectFile }) {
             </StatGrid>
           </Section>
           <div className="two-column">
-            <Section title="Active journals" description="Journals the game is currently writing to. Click one to view its entries.">
+            <Section title="Active Journals" description="Journals the game is currently writing to. Click one to view its entries.">
               <DataTable
+                tableId="journals.active"
                 rows={activeFiles}
                 onRowClick={onSelectFile}
                 emptyMessage="No active journals. The game doesn't appear to be running."
@@ -79,8 +79,8 @@ function JournalSummarySection({ commanderFilter, onSelectFile }) {
                 ]}
               />
             </Section>
-            <Section title="Most common events">
-              <DataTable rowKey="event" rows={eventPage.pageRows} pagination={eventPage.pagination} columns={[
+            <Section title="Most Common Events">
+              <DataTable tableId="journals.events" rowKey="event" rows={topEvents} pageSize={EVENTS_PER_PAGE} pageResetKey={commanderFilter} columns={[
                 { key: 'event', label: 'Event' },
                 { key: 'entry_count', label: 'Entries', align: 'right' },
               ]} />
@@ -97,24 +97,25 @@ function JournalFilesSection({ commanderFilter, onSelectFile }) {
   const [status, setStatus] = useState('');
   const [isActiveOnly, setIsActiveOnly] = useState(false);
   const filterParams = { commander: commanderFilter, ...queryParams, status, active: isActiveOnly };
-  const tableState = useTableState({ defaultSort: 'file', pageSize: 25, resetKey: JSON.stringify(filterParams) });
+  const tableState = useTableState({ tableId: 'journals.files', defaultSort: 'file', pageSize: 25, resetKey: JSON.stringify(filterParams) });
   const filesRequest = useApi('/api/journals', { ...filterParams, ...tableState.queryParams }, JOURNAL_TOPICS);
 
   return (
-    <Section title="Journal files" description="Click a file to view its entries. Flagged files have no single commander and aren't parsed.">
+    <Section title="Journal Files" description="Click a file to view its entries. Flagged files have no single commander and aren't parsed.">
       <FilterBar filters={filters} updateFilter={updateFilter} searchPlaceholder="Search file name, commander or reason…">
         <select value={status} onChange={(changeEvent) => setStatus(changeEvent.target.value)}>
-          <option value="">All statuses</option>
+          <option value="">All Statuses</option>
           <option value="ok">Parsed</option>
-          <option value="corrupt">Flagged / corrupt</option>
+          <option value="corrupt">Flagged / Corrupt</option>
           <option value="pending">Pending</option>
         </select>
         <label className="checkbox">
           <input type="checkbox" checked={isActiveOnly} onChange={(changeEvent) => setIsActiveOnly(changeEvent.target.checked)} />
-          Active only
+          Active Only
         </label>
       </FilterBar>
       <DataTable
+        tableId="journals.files"
         isLoading={filesRequest.isLoading}
         rows={filesRequest.data?.rows ?? []}
         sorting={tableState.sorting}
@@ -137,7 +138,7 @@ function JournalFilesSection({ commanderFilter, onSelectFile }) {
 function JournalEntriesSection({ journalFile, onClose }) {
   const [eventFilter, setEventFilter] = useState('');
   const [expandedEntryId, setExpandedEntryId] = useState(null);
-  const tableState = useTableState({ defaultSort: 'line', defaultOrder: 'desc', pageSize: 50, resetKey: `${journalFile.id}:${eventFilter}` });
+  const tableState = useTableState({ tableId: 'journals.entries', defaultSort: 'line', defaultOrder: 'desc', pageSize: 50, resetKey: `${journalFile.id}:${eventFilter}` });
   const entriesRequest = useApi(`/api/journals/${journalFile.id}/entries`, { event: eventFilter, ...tableState.queryParams }, JOURNAL_TOPICS);
 
   return (
@@ -155,6 +156,7 @@ function JournalEntriesSection({ journalFile, onClose }) {
         />
       </div>
       <DataTable
+        tableId="journals.entries"
         isLoading={entriesRequest.isLoading}
         rows={entriesRequest.data?.rows ?? []}
         pagination={entriesRequest.data && { ...entriesRequest.data, onOffsetChange: tableState.onOffsetChange }}
@@ -212,10 +214,10 @@ function SqlConsoleSection() {
       actions={(
         <>
           <select value="" onChange={(changeEvent) => changeEvent.target.value && setQueryText(changeEvent.target.value)}>
-            <option value="">Example queries…</option>
+            <option value="">Example Queries…</option>
             {EXAMPLE_QUERIES.map((example) => <option key={example.label} value={example.query}>{example.label}</option>)}
           </select>
-          <button type="button" onClick={() => setIsSchemaVisible(!isSchemaVisible)}>{isSchemaVisible ? 'Hide' : 'Show'} schema</button>
+          <button type="button" onClick={() => setIsSchemaVisible(!isSchemaVisible)}>{isSchemaVisible ? 'Hide' : 'Show'} Schema</button>
         </>
       )}
     >
@@ -242,7 +244,7 @@ function SqlConsoleSection() {
         onKeyDown={handleKeyDown}
       />
       <div className="sql-actions">
-        <button type="button" className="button-primary" onClick={runQuery} disabled={isRunning}>{isRunning ? 'Running…' : 'Run query'}</button>
+        <button type="button" className="button-primary" onClick={runQuery} disabled={isRunning}>{isRunning ? 'Running…' : 'Run Query'}</button>
         <span className="muted small">Ctrl+Enter to run</span>
         {queryResult && (
           <span className="muted small">
@@ -253,6 +255,7 @@ function SqlConsoleSection() {
       {queryError && <div className="notice notice-error">{queryError}</div>}
       {queryResult && (
         <DataTable
+          tableId="journals.queryResults"
           rowKey="__rowIndex"
           rows={queryResult.rows.map((rowValues, rowIndex) => ({
             __rowIndex: rowIndex,
@@ -291,6 +294,7 @@ function StatModulesSection() {
       <LoadingState requestState={modulesRequest}>
         {({ modules }) => (
           <DataTable
+            tableId="journals.statModules"
             rowKey="name"
             rows={modules}
             columns={[

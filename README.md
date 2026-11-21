@@ -43,7 +43,7 @@ Then open http://localhost:4267.
 
   ```sh
   install -Dm755 ed-journal-tool-<version> ~/.local/bin/ed-journal-tool-<version>
-  install -Dm644 ed-journal-tool.png ~/.local/share/icons/hicolor/256x256/apps/ed-journal-tool.png
+  install -Dm644 ed-journal-tool.png ~/.local/share/icons/hicolor/512x512/apps/ed-journal-tool.png
   install -Dm644 ed-journal-tool.desktop ~/.local/share/applications/ed-journal-tool.desktop
   ```
 

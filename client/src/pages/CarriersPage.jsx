@@ -17,6 +17,8 @@ const CARRIER_TYPE_BADGE_TONES = { FleetCarrier: 'fleet-carrier', SquadronCarrie
 // The journal's lowercase DockingAccess values and TaxRate_* service names, for display.
 const DOCKING_ACCESS_LABELS = { squadronfriends: 'Squadron & Friends' };
 const TAX_SERVICE_LABELS = { pioneersupplies: 'Pioneer Supplies' };
+// Crew roles left off the carrier cards' service list: the captain, and services every carrier has.
+const HIDDEN_CREW_ROLES = new Set(['Captain', 'Commodities', 'CarrierFuel']);
 
 function toTitleCase(text) {
   return text.replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
@@ -32,9 +34,9 @@ function formatTaxService(service) {
 
 /** Card sort options. Carriers with an unknown age or activity time are listed last. */
 const CARD_SORTS = {
-  age: { label: 'Age (oldest first)', compare: (first, second) => compareTimestamps(first.acquired_at, second.acquired_at, 'asc') },
+  age: { label: 'Age (Oldest First)', compare: (first, second) => compareTimestamps(first.acquired_at, second.acquired_at, 'asc') },
   name: { label: 'Name', compare: (first, second) => getCarrierLabel(first).localeCompare(getCarrierLabel(second), undefined, { sensitivity: 'base' }) },
-  activity: { label: 'Activity (most recent first)', compare: (first, second) => compareTimestamps(first.updated_at, second.updated_at, 'desc') },
+  activity: { label: 'Activity (Most Recent First)', compare: (first, second) => compareTimestamps(first.updated_at, second.updated_at, 'desc') },
 };
 
 function compareTimestamps(first, second, order) {
@@ -226,18 +228,20 @@ function CarrierOverviewTable({ commanderStatuses, carriers, includeCommandersWi
 
   return (
     <DataTable
+      tableId="carriers.overview"
       rowKey="rowKey"
       rows={overviewRows}
       rowClassName={(row) => (!row.carrier && !includeCommandersWithoutCarrier ? 'collapsed-row' : undefined)}
       emptyMessage={includeCommandersWithoutCarrier ? 'No commanders.' : 'No commander owns a carrier.'}
       columns={[
-        { key: 'commander', label: 'Commander', shrink: true, className: 'overview-name-cell', render: ({ status }) => <CopyableText copyText={status.commanderName}>CMDR {status.commanderName}</CopyableText> },
-        { key: 'squadron', label: 'Squadron', shrink: true, render: ({ status }) => renderSquadronId(status) },
-        { key: 'name', label: 'Carrier Name', shrink: true, className: 'overview-name-cell', render: ({ carrier }) => (carrier?.name ? <CopyableText copyText={carrier.name}>{carrier.name}</CopyableText> : '—') },
-        { key: 'callsign', label: 'ID', shrink: true, className: 'carrier-id-cell', render: ({ carrier }) => (carrier?.callsign ? <CopyableText copyText={carrier.callsign}>{carrier.callsign}</CopyableText> : '—') },
+        { key: 'commander', label: 'Commander', sortValue: ({ status }) => status.commanderName, shrink: true, className: 'overview-name-cell', render: ({ status }) => <CopyableText copyText={status.commanderName}>CMDR {status.commanderName}</CopyableText> },
+        { key: 'squadron', label: 'Squadron', sortValue: ({ status }) => status.squadronId, shrink: true, render: ({ status }) => renderSquadronId(status) },
+        { key: 'name', label: 'Carrier Name', sortValue: ({ carrier }) => carrier?.name, shrink: true, className: 'overview-name-cell', render: ({ carrier }) => (carrier?.name ? <CopyableText copyText={carrier.name}>{carrier.name}</CopyableText> : '—') },
+        { key: 'callsign', label: 'ID', sortValue: ({ carrier }) => carrier?.callsign, shrink: true, className: 'carrier-id-cell', render: ({ carrier }) => (carrier?.callsign ? <CopyableText copyText={carrier.callsign}>{carrier.callsign}</CopyableText> : '—') },
         {
           key: 'location',
           label: 'Current System/Body',
+          sortValue: ({ carrier }) => carrier?.effective_location?.starSystem,
           shrink: true,
           className: 'carrier-location-cell',
           render: ({ carrier }) => renderSystemAndBody(carrier?.effective_location?.starSystem, carrier?.effective_location?.body),
@@ -245,6 +249,7 @@ function CarrierOverviewTable({ commanderStatuses, carriers, includeCommandersWi
         {
           key: 'destination',
           label: 'Destination System/Body',
+          sortValue: ({ carrier }) => carrier?.pending_jump?.starSystem,
           shrink: true,
           className: 'overview-gap-cell',
           render: ({ carrier }) => {
@@ -265,6 +270,7 @@ function CarrierOverviewTable({ commanderStatuses, carriers, includeCommandersWi
         {
           key: 'jumpTimer',
           label: 'Jump Timer',
+          sortValue: ({ carrier }) => { const endsAt = getJumpState(carrier, now)?.endsAt; return endsAt ? Date.parse(endsAt) : null; },
           align: 'right',
           shrink: true,
           className: 'overview-wide-gap-cell',
@@ -275,15 +281,16 @@ function CarrierOverviewTable({ commanderStatuses, carriers, includeCommandersWi
             return <CopyableText copyText={countdown}>{countdown}</CopyableText>;
           },
         },
-        { key: 'fuel', label: 'Fuel', align: 'right', shrink: true, className: 'overview-gap-cell', render: ({ carrier }) => (carrier?.fuel_level == null ? '—' : `${formatNumber(carrier.fuel_level)} t`) },
+        { key: 'fuel', label: 'Fuel', sortValue: ({ carrier }) => carrier?.fuel_level, align: 'right', shrink: true, className: 'overview-gap-cell', render: ({ carrier }) => (carrier?.fuel_level == null ? '—' : `${formatNumber(carrier.fuel_level)} t`) },
         {
           key: 'freeSpace',
           label: 'Free Space',
+          sortValue: ({ carrier }) => carrier?.space_usage?.FreeSpace,
           align: 'right',
           shrink: true,
           render: ({ carrier }) => (carrier?.space_usage?.FreeSpace == null ? '—' : `${formatNumber(carrier.space_usage.FreeSpace)} t`),
         },
-        { key: 'note', label: 'Notes', wrap: true, className: 'carrier-note-cell', render: ({ status, carrier }) => (carrier
+        { key: 'note', label: 'Notes', sortValue: ({ status, carrier }) => (carrier ? carrier.note : status.commanderNote), wrap: true, className: 'carrier-note-cell', render: ({ status, carrier }) => (carrier
           ? <NoteCell note={carrier.note} saveUrl={`/api/carrier-notes/${carrier.carrier_id}`} subjectLabel={carrier.name ?? carrier.callsign ?? 'carrier'} />
           : <NoteCell note={status.commanderNote} saveUrl={`/api/commander-notes/${status.commanderId}`} subjectLabel={`CMDR ${status.commanderName}`} />) },
       ]}
@@ -354,7 +361,7 @@ export default function CarriersPage({ commanderFilter }) {
                       checked={showCommandersWithoutCarrier}
                       onChange={(changeEvent) => changeShowCommandersWithoutCarrier(changeEvent.target.checked)}
                     />
-                    Show commanders without a carrier
+                    Show Commanders With No Carrier
                   </label>
                 )}
               >
@@ -378,7 +385,7 @@ export default function CarriersPage({ commanderFilter }) {
                         checked={showUnownedCarriers}
                         onChange={(changeEvent) => changeShowUnownedCarriers(changeEvent.target.checked)}
                       />
-                      Show unowned carriers
+                      Show Unowned Carriers
                     </label>
                     <select value={cardSort} onChange={(changeEvent) => changeCardSort(changeEvent.target.value)} aria-label="Sort carriers">
                       {Object.entries(CARD_SORTS).map(([sortName, sortOption]) => <option key={sortName} value={sortName}>Sort: {sortOption.label}</option>)}
@@ -407,7 +414,8 @@ function CarrierCard({ carrier }) {
   const spaceUsage = carrier.space_usage ?? {};
   const location = carrier.effective_location;
   // Only installed services; the journal can't tell removed ones from ones that were never installed.
-  const crewServices = Object.entries(carrier.crew_services ?? {}).filter(([role, crewService]) => role !== 'Captain' && crewService.activated);
+  const crewServices = Object.entries(carrier.crew_services ?? {})
+    .filter(([role, crewService]) => !HIDDEN_CREW_ROLES.has(role) && crewService.activated);
   const tradeOrders = Object.values(carrier.trade_orders ?? {});
 
   return (
@@ -483,6 +491,7 @@ function CarrierCard({ carrier }) {
         <details className="details">
           <summary>{tradeOrders.length} Trade Order{tradeOrders.length === 1 ? '' : 's'}</summary>
           <DataTable
+            tableId="carriers.tradeOrders"
             rowKey="commodity"
             rows={tradeOrders}
             columns={[
@@ -512,8 +521,8 @@ function PauseIcon() {
 function CarrierHistorySection({ commanderFilter }) {
   const { filters, updateFilter, queryParams } = useListFilters();
   const filterParams = { commander: commanderFilter, ...queryParams };
-  const jumpTableState = useTableState({ defaultSort: 'timestamp', pageSize: 25, resetKey: JSON.stringify(filterParams) });
-  const transactionTableState = useTableState({ defaultSort: 'timestamp', pageSize: 25, resetKey: JSON.stringify(filterParams) });
+  const jumpTableState = useTableState({ tableId: 'carriers.jumps', defaultSort: 'timestamp', pageSize: 25, resetKey: JSON.stringify(filterParams) });
+  const transactionTableState = useTableState({ tableId: 'carriers.bankTransfers', defaultSort: 'timestamp', pageSize: 25, resetKey: JSON.stringify(filterParams) });
 
   const jumpsRequest = useApi('/api/stats/carriers/jumps', { ...filterParams, ...jumpTableState.queryParams });
   const transactionsRequest = useApi('/api/stats/carriers/transactions', { ...filterParams, ...transactionTableState.queryParams });
@@ -523,6 +532,7 @@ function CarrierHistorySection({ commanderFilter }) {
       <FilterBar filters={filters} updateFilter={updateFilter} searchPlaceholder="Search carrier or system…" />
       <h3 id="carrier-jump-history" className="subheading">Jumps</h3>
       <DataTable
+        tableId="carriers.jumps"
         isLoading={jumpsRequest.isLoading}
         rows={jumpsRequest.data?.rows ?? []}
         sorting={jumpTableState.sorting}
@@ -538,6 +548,7 @@ function CarrierHistorySection({ commanderFilter }) {
       />
       <h3 id="carrier-bank-history" className="subheading">Bank transfers</h3>
       <DataTable
+        tableId="carriers.bankTransfers"
         isLoading={transactionsRequest.isLoading}
         rows={transactionsRequest.data?.rows ?? []}
         sorting={transactionTableState.sorting}

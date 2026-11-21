@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import DataTable from '../components/DataTable.jsx';
 import FilterBar from '../components/FilterBar.jsx';
-import { useListFilters, usePagedRows, useTableState } from '../hooks/use-list-filters.js';
+import { useListFilters, useTableState } from '../hooks/use-list-filters.js';
 import { LoadingState, Section, StatCard, StatGrid } from '../components/ui.jsx';
 import { useApi } from '../hooks/use-api.js';
 import { formatDateTime, formatNumber, formatSystemName } from '../format.js';
@@ -12,11 +12,10 @@ export default function DepotsPage({ commanderFilter }) {
   const { filters, updateFilter, queryParams } = useListFilters();
   const [isOwnedExcluded, setIsOwnedExcluded] = useState(false);
   const filterParams = { commander: commanderFilter, ...queryParams, excludeOwned: isOwnedExcluded };
-  const tableState = useTableState({ defaultSort: 'timestamp', resetKey: JSON.stringify(filterParams) });
+  const tableState = useTableState({ tableId: 'depots.deposits', defaultSort: 'timestamp', resetKey: JSON.stringify(filterParams) });
 
   const totalsRequest = useApi('/api/stats/fuel-deposits/totals', filterParams);
   const depositsRequest = useApi('/api/stats/fuel-deposits/deposits', { ...filterParams, ...tableState.queryParams });
-  const carrierPage = usePagedRows(totalsRequest.data?.byCarrier ?? [], { pageSize: CARRIERS_PER_PAGE, resetKey: JSON.stringify(filterParams) });
 
   return (
     <>
@@ -38,11 +37,13 @@ export default function DepotsPage({ commanderFilter }) {
                 <StatCard label="Last deposit" value={formatDateTime(combined.last_deposit_at)} />
               </StatGrid>
               <div className="two-column">
-                <Section title="By carrier">
+                <Section title="By Carrier">
                   <DataTable
+                    tableId="depots.byCarrier"
                     rowKey="carrier_id"
-                    rows={carrierPage.pageRows}
-                    pagination={carrierPage.pagination}
+                    rows={byCarrier}
+                    pageSize={CARRIERS_PER_PAGE}
+                    pageResetKey={JSON.stringify(filterParams)}
                     columns={[
                       { key: 'carrier_name', label: 'Carrier' },
                       { key: 'deposit_count', label: 'Deposits', align: 'right' },
@@ -52,8 +53,8 @@ export default function DepotsPage({ commanderFilter }) {
                   />
                 </Section>
                 {commanderFilter === 'all' && (
-                  <Section title="By commander">
-                    <DataTable rowKey="commander_id" rows={perCommander} columns={[
+                  <Section title="By Commander">
+                    <DataTable tableId="depots.byCommander" rowKey="commander_id" rows={perCommander} columns={[
                       { key: 'commander_name', label: 'Commander', render: (row) => `CMDR ${row.commander_name}` },
                       { key: 'deposit_count', label: 'Deposits', align: 'right' },
                       { key: 'total_amount', label: 'Tritium (t)', align: 'right' },
@@ -69,6 +70,7 @@ export default function DepotsPage({ commanderFilter }) {
 
       <Section id="depot-history" title="Deposits">
         <DataTable
+          tableId="depots.deposits"
           isLoading={depositsRequest.isLoading}
           rows={depositsRequest.data?.rows ?? []}
           sorting={tableState.sorting}

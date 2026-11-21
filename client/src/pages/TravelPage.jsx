@@ -7,19 +7,19 @@ import { useListFilters, useTableState } from '../hooks/use-list-filters.js';
 import { formatDateTime, formatLightYears, formatNumber, formatSystemName } from '../format.js';
 
 const JUMP_TYPE_OPTIONS = [
-  { value: '', label: 'All jumps' },
-  { value: 'fsd', label: 'Non-carrier jumps' },
-  { value: 'normal', label: 'Normal FSD jumps' },
-  { value: 'supercharged', label: 'Supercharged jumps' },
-  { value: 'synthesis', label: 'Synthesis-boosted jumps' },
-  { value: 'carrier', label: 'Carrier jumps' },
+  { value: '', label: 'All Jumps' },
+  { value: 'fsd', label: 'Non-Carrier Jumps' },
+  { value: 'normal', label: 'Normal FSD Jumps' },
+  { value: 'supercharged', label: 'Supercharged Jumps' },
+  { value: 'synthesis', label: 'Synthesis-Boosted Jumps' },
+  { value: 'carrier', label: 'Carrier Jumps' },
 ];
 
 export default function TravelPage({ commanderFilter }) {
   const { filters, updateFilter, queryParams } = useListFilters();
   const [jumpType, setJumpType] = useState('fsd');
   const filterParams = { commander: commanderFilter, ...queryParams };
-  const tableState = useTableState({ defaultSort: 'timestamp', resetKey: JSON.stringify({ ...filterParams, jumpType }) });
+  const tableState = useTableState({ tableId: 'travel.jumps', defaultSort: 'timestamp', resetKey: JSON.stringify({ ...filterParams, jumpType }) });
 
   const summaryRequest = useApi('/api/stats/travel/summary', { ...filterParams, type: jumpType });
   const selectedJumpTypeLabel = JUMP_TYPE_OPTIONS.find((option) => option.value === jumpType).label;
@@ -47,6 +47,7 @@ export default function TravelPage({ commanderFilter }) {
             </StatGrid>
             {commanderFilter === 'all' && perCommander.length > 1 && (
               <DataTable
+                tableId="travel.byCommander"
                 rowKey="commander_id"
                 rows={perCommander}
                 columns={[
@@ -68,6 +69,7 @@ export default function TravelPage({ commanderFilter }) {
 
       <h3 id="travel-history" className="subheading">Jump history</h3>
       <DataTable
+        tableId="travel.jumps"
         isLoading={jumpsRequest.isLoading}
         rows={jumpsRequest.data?.rows ?? []}
         sorting={tableState.sorting}

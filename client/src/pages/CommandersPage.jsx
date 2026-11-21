@@ -36,7 +36,7 @@ export default function CommandersPage({ commanderFilter }) {
         </LoadingState>
       </Section>
 
-      <Section title="Commanders" description="Click a value to copy it to the clipboard.">
+      <Section title="Commander Details" description="Click a value to copy it to the clipboard.">
         <LoadingState requestState={profilesRequest} emptyMessage="No commanders found yet.">
           {({ commanders }) => commanders.length > 0 && (
             <div className="card-grid">
@@ -132,6 +132,7 @@ function AssetDetailsSection({ commanderId }) {
             case 'fleet':
               return (
                 <DataTable
+                  tableId="commanders.fleet"
                   rowKey="shipId"
                   rows={assets.fleet}
                   emptyMessage="No ships recorded yet (visit a shipyard to record stored ships)."
@@ -146,6 +147,7 @@ function AssetDetailsSection({ commanderId }) {
             case 'modules':
               return (
                 <AssetTable
+                  tableId="commanders.storedModules"
                   rows={assets.storedModules?.items}
                   updatedAt={assets.updatedAt.storedModules}
                   columns={[
@@ -159,6 +161,7 @@ function AssetDetailsSection({ commanderId }) {
             case 'materials':
               return (
                 <AssetTable
+                  tableId="commanders.materials"
                   rows={[
                     ...(assets.materials?.raw ?? []).map((material) => ({ ...material, category: 'Raw' })),
                     ...(assets.materials?.manufactured ?? []).map((material) => ({ ...material, category: 'Manufactured' })),
@@ -171,6 +174,7 @@ function AssetDetailsSection({ commanderId }) {
             case 'locker':
               return (
                 <AssetTable
+                  tableId="commanders.shipLocker"
                   rows={['items', 'components', 'consumables', 'data'].flatMap((category) => (assets.shipLocker?.[category] ?? [])
                     .map((lockerItem) => ({ ...lockerItem, category: category.charAt(0).toUpperCase() + category.slice(1) })))}
                   updatedAt={assets.updatedAt.shipLocker}
@@ -180,6 +184,7 @@ function AssetDetailsSection({ commanderId }) {
             case 'cargo':
               return (
                 <AssetTable
+                  tableId="commanders.cargo"
                   rows={assets.cargo?.inventory}
                   updatedAt={assets.updatedAt.cargo}
                   columns={[
@@ -198,11 +203,11 @@ function AssetDetailsSection({ commanderId }) {
   );
 }
 
-function AssetTable({ rows, columns, updatedAt }) {
+function AssetTable({ tableId, rows, columns, updatedAt }) {
   return (
     <>
       {updatedAt && <p className="muted small">Snapshot from {formatDateTime(updatedAt)}</p>}
-      <DataTable rowKey="rowId" rows={(rows ?? []).map((row, index) => ({ ...row, rowId: index }))} columns={columns} emptyMessage="Nothing recorded." />
+      <DataTable tableId={tableId} rowKey="rowId" rows={(rows ?? []).map((row, index) => ({ ...row, rowId: index }))} columns={columns} emptyMessage="Nothing recorded." />
     </>
   );
 }

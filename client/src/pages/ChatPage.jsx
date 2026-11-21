@@ -26,7 +26,7 @@ export default function ChatPage({ commanderFilter }) {
 
   const baseParams = { commander: commanderFilter, ...queryParams, channel, sender };
   const messageParams = { ...baseParams, senderType: selectedSenderTypes.join(',') };
-  const tableState = useTableState({ defaultSort: 'timestamp', resetKey: JSON.stringify(messageParams) });
+  const tableState = useTableState({ tableId: 'chat.messages', defaultSort: 'timestamp', resetKey: JSON.stringify(messageParams) });
 
   const totalsRequest = useApi('/api/stats/chat/totals', baseParams);
   const messagesRequest = useApi(
@@ -50,7 +50,7 @@ export default function ChatPage({ commanderFilter }) {
     <Section title="Messages" description="Click a sender's name to show only their messages.">
       <FilterBar filters={filters} updateFilter={updateFilter} searchPlaceholder="Search messages or names…">
         <select value={channel} onChange={(changeEvent) => setChannel(changeEvent.target.value)}>
-          <option value="">All channels</option>
+          <option value="">All Channels</option>
           {(totalsRequest.data?.byChannel ?? []).filter((row) => row.channel).map((row) => (
             <option key={row.channel} value={row.channel}>{formatChannel(row.channel)} ({formatNumber(row.message_count)})</option>
           ))}
@@ -82,6 +82,7 @@ export default function ChatPage({ commanderFilter }) {
       </div>
 
       <DataTable
+        tableId="chat.messages"
         isLoading={messagesRequest.isLoading}
         rows={messageRows}
         sorting={tableState.sorting}
@@ -112,7 +113,7 @@ function renderSender(message, onSelectSender) {
 }
 
 function formatChannel(channel) {
-  const channelLabels = { npc: 'NPC', starsystem: 'System', squadleaders: 'Squad leaders', player: 'Direct' };
+  const channelLabels = { npc: 'NPC', starsystem: 'System', squadleaders: 'Squad Leaders', player: 'Direct' };
   if (!channel) return '—';
   return channelLabels[channel] ?? channel.charAt(0).toUpperCase() + channel.slice(1);
 }

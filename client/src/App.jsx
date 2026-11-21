@@ -267,7 +267,7 @@ function MobileHeader({ isMenuOpen, onToggleMenu, activeJournalCount }) {
           {isMenuOpen ? <path d="M6 6l12 12M18 6L6 18" /> : <path d="M4 7h16M4 12h16M4 17h16" />}
         </svg>
       </button>
-      <img className="mobile-header-logo" src="/edjt-logo.svg" alt="" width="28" height="28" />
+      <img className="mobile-header-logo" src="/edjt-logo.svg" alt="" width="32" height="32" />
       <span className="brand-title">ED Journal Tool</span>
       <a href="#/journals" className="mobile-header-status" title={statusText} aria-label={statusText}>
         <span className={`status-dot status-dot-${statusTone}`} />

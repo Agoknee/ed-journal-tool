@@ -1,13 +1,13 @@
 import SearchInput from './SearchInput.jsx';
 
 const PERIOD_OPTIONS = [
-  { value: '', label: 'All time' },
-  { value: '24h', label: 'Last 24 hours' },
-  { value: '7d', label: 'Last 7 days' },
-  { value: '30d', label: 'Last 30 days' },
-  { value: '90d', label: 'Last 90 days' },
-  { value: '1y', label: 'Last year' },
-  { value: 'custom', label: 'Custom range…' },
+  { value: '', label: 'All Time' },
+  { value: '24h', label: 'Last 24 Hours' },
+  { value: '7d', label: 'Last 7 Days' },
+  { value: '30d', label: 'Last 30 Days' },
+  { value: '90d', label: 'Last 90 Days' },
+  { value: '1y', label: 'Last Year' },
+  { value: 'custom', label: 'Custom Range…' },
 ];
 
 /**

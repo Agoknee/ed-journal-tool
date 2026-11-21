@@ -13,7 +13,7 @@ export default function TradePage({ commanderFilter }) {
   const [isCarriersOnly, setIsCarriersOnly] = useState(false);
 
   const filterParams = { commander: commanderFilter, ...queryParams, type: tradeType, commodity, carriersOnly: isCarriersOnly };
-  const tableState = useTableState({ defaultSort: 'timestamp', resetKey: JSON.stringify(filterParams) });
+  const tableState = useTableState({ tableId: 'trade.trades', defaultSort: 'timestamp', resetKey: JSON.stringify(filterParams) });
 
   const commodityListRequest = useApi('/api/stats/commodities/list');
   const totalsRequest = useApi('/api/stats/commodities/totals', filterParams);
@@ -24,19 +24,19 @@ export default function TradePage({ commanderFilter }) {
       <Section title="Filters">
         <FilterBar filters={filters} updateFilter={updateFilter} searchPlaceholder="Search carrier, station or commodity…">
           <select value={tradeType} onChange={(changeEvent) => setTradeType(changeEvent.target.value)}>
-            <option value="">Purchases &amp; sales</option>
-            <option value="buy">Purchases only</option>
-            <option value="sell">Sales only</option>
+            <option value="">Purchases &amp; Sales</option>
+            <option value="buy">Purchases Only</option>
+            <option value="sell">Sales Only</option>
           </select>
           <select value={commodity} onChange={(changeEvent) => setCommodity(changeEvent.target.value)}>
-            <option value="">All commodities</option>
+            <option value="">All Commodities</option>
             {(commodityListRequest.data?.commodities ?? []).map((commodityOption) => (
               <option key={commodityOption.commodity} value={commodityOption.commodity}>{commodityOption.commodity_name}</option>
             ))}
           </select>
           <label className="checkbox">
             <input type="checkbox" checked={isCarriersOnly} onChange={(changeEvent) => setIsCarriersOnly(changeEvent.target.checked)} />
-            Carriers only
+            Carriers Only
           </label>
         </FilterBar>
       </Section>
@@ -53,7 +53,7 @@ export default function TradePage({ commanderFilter }) {
                 <StatCard label="Profit" value={formatCredits(combined.total_profit)} tone="accent" detail="Sale price minus average price paid" />
               </StatGrid>
               {commanderFilter === 'all' && perCommander.length > 1 && (
-                <DataTable rowKey="commander_id" rows={perCommander} columns={[
+                <DataTable tableId="trade.byCommander" rowKey="commander_id" rows={perCommander} columns={[
                   { key: 'commander_name', label: 'Commander', render: (row) => `CMDR ${row.commander_name}` },
                   ...totalsColumns,
                 ]} />
@@ -61,10 +61,10 @@ export default function TradePage({ commanderFilter }) {
             </Section>
             <div className="two-column">
               <Section id="trade-commodities" title="By Commodity">
-                <DataTable rowKey="commodity" rows={byCommodity} columns={[{ key: 'commodity_name', label: 'Commodity' }, ...totalsColumns]} />
+                <DataTable tableId="trade.byCommodity" rowKey="commodity" rows={byCommodity} columns={[{ key: 'commodity_name', label: 'Commodity' }, ...totalsColumns]} />
               </Section>
               <Section id="trade-markets" title="By Market / Carrier" description="Top 100 by volume">
-                <DataTable rowKey="market_id" rows={byMarket} columns={[
+                <DataTable tableId="trade.byMarket" rowKey="market_id" rows={byMarket} columns={[
                   { key: 'market_name', label: 'Market', render: (row) => <>{row.market_name ?? `Market #${row.market_id}`} {row.is_carrier === 1 && <Badge tone="info">Carrier</Badge>}</> },
                   ...totalsColumns,
                 ]} />
@@ -76,6 +76,7 @@ export default function TradePage({ commanderFilter }) {
 
       <Section id="trade-history" title="Trade History">
         <DataTable
+          tableId="trade.trades"
           isLoading={tradesRequest.isLoading}
           rows={tradesRequest.data?.rows ?? []}
           sorting={tableState.sorting}

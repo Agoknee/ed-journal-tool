@@ -100,7 +100,7 @@ function writeCustomizedWindowsBinary(sourcePath, outputPath) {
 /**
  * Writes a freedesktop.org menu entry and its icon next to the Linux executable. They expect the usual
  * per-user install: the executable on PATH (e.g. ~/.local/bin), the icon in
- * ~/.local/share/icons/hicolor/256x256/apps and the entry in ~/.local/share/applications.
+ * ~/.local/share/icons/hicolor/512x512/apps and the entry in ~/.local/share/applications.
  */
 function writeLinuxDesktopEntry(executableName) {
   copyFileSync(path.join(packagingAssetsPath, `${APP_ID}.png`), path.join(distDirectoryPath, `${APP_ID}.png`));
