@@ -23,9 +23,9 @@ export function StatGrid({ children }) {
   return <div className="stat-grid">{children}</div>;
 }
 
-export function StatCard({ label, value, detail, tone }) {
+export function StatCard({ label, value, detail, tone, title }) {
   return (
-    <div className={`stat-card ${tone ? `stat-card-${tone}` : ''}`}>
+    <div className={`stat-card ${tone ? `stat-card-${tone}` : ''}`} title={title}>
       <div className="stat-label">{label}</div>
       <div className="stat-value">{value}</div>
       {detail && <div className="stat-detail">{detail}</div>}

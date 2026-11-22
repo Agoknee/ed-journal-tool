@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { defineStatModule } from '../define-stat-module.mjs';
+import { DOCKING_EVENTS, getDockedLocation, trackDockingState } from '../docking-state.mjs';
 import { getCommanderIdFilter } from '../query-helpers.mjs';
 
 /**
@@ -11,6 +12,8 @@ import { getCommanderIdFilter } from '../query-helpers.mjs';
  * - Transactions are the events that state an amount: sales, purchases, mission rewards, vouchers,
  *   data sales, repairs, fuel, rebuys, fines and so on. Kills earn vouchers, which count when they're
  *   redeemed. Crew wages are a share of earnings the game pays out separately.
+ * - Commodity trades at a fleet carrier's market are marked, so they can be left out (they're often
+ *   large transfers between your own carriers and ships rather than earnings).
  */
 const STATISTICS_SECTIONS = {
   Bank_Account: ['Current_Wealth', 'Spent_On_Ships', 'Spent_On_Outfitting', 'Spent_On_Repairs', 'Spent_On_Fuel', 'Spent_On_Ammo_Consumables', 'Spent_On_Insurance', 'Insurance_Claims', 'Spent_On_Suits', 'Spent_On_Weapons', 'Spent_On_Suit_Consumables'],
@@ -32,7 +35,7 @@ export default defineStatModule({
   name: 'credits',
   title: 'Credits',
   description: 'Credit balance over time, income and spending by category, and lifetime totals.',
-  version: 1,
+  version: 2,
   events: [
     'LoadGame', 'CarrierBankTransfer', 'Statistics', 'MarketSell', 'MarketBuy', 'MissionCompleted', 'RedeemVoucher',
     'SellExplorationData', 'MultiSellExplorationData', 'SellOrganicData', 'CommunityGoalReward', 'SearchAndRescue',
@@ -40,7 +43,7 @@ export default defineStatModule({
     'FetchRemoteModule', 'SellSuit', 'SellWeapon', 'BuySuit', 'BuyWeapon', 'UpgradeSuit', 'UpgradeWeapon', 'BuyMicroResources',
     'SellMicroResources', 'SellDrones', 'BuyDrones', 'BuyAmmo', 'RefuelAll', 'RefuelPartial', 'RestockVehicle', 'Repair',
     'RepairAll', 'Resurrect', 'PayFines', 'PayBounties', 'PayLegacyFines', 'NpcCrewPaidWage', 'CrewHire', 'BuyExplorationData',
-    'BuyTradeData', 'CarrierBuy', 'EngineerContribution', 'PowerplaySalary', 'PowerplayFastTrack',
+    'BuyTradeData', 'CarrierBuy', 'EngineerContribution', 'PowerplaySalary', 'PowerplayFastTrack', ...DOCKING_EVENTS,
   ],
   ownedObjects: [
     { type: 'table', name: 'credit_balances' },
@@ -62,7 +65,8 @@ export default defineStatModule({
       timestamp     TEXT NOT NULL,
       category      TEXT NOT NULL,
       amount        INTEGER NOT NULL,  -- positive income, negative spending
-      description   TEXT
+      description   TEXT,
+      is_carrier    INTEGER NOT NULL DEFAULT 0  -- a commodity trade at a fleet carrier's market
     );
     CREATE INDEX IF NOT EXISTS idx_credit_transactions ON credit_transactions(commander_id, timestamp);
 
@@ -75,18 +79,21 @@ export default defineStatModule({
 
   createProcessor(database) {
     const insertBalance = database.prepare('INSERT INTO credit_balances (commander_id, timestamp, balance, source) VALUES (?, ?, ?, ?)');
-    const insertTransaction = database.prepare('INSERT INTO credit_transactions (commander_id, timestamp, category, amount, description) VALUES (?, ?, ?, ?, ?)');
+    const insertTransaction = database.prepare('INSERT INTO credit_transactions (commander_id, timestamp, category, amount, description, is_carrier) VALUES (?, ?, ?, ?, ?, ?)');
     const upsertStatistics = database.prepare(`
       INSERT INTO credit_statistics (commander_id, data, updated_at) VALUES (?, ?, ?)
       ON CONFLICT (commander_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
     `);
 
-    return ({ commanderId, event, timestamp, data }) => {
-      const add = (category, amount, description = null) => {
-        if (Number.isFinite(amount) && amount !== 0) insertTransaction.run(commanderId, timestamp, category, Math.round(amount), description);
+    return ({ commanderId, event, timestamp, data }, moduleState) => {
+      if (trackDockingState(event, data, moduleState)) return;
+      const add = (category, amount, description = null, isCarrier = false) => {
+        if (Number.isFinite(amount) && amount !== 0) insertTransaction.run(commanderId, timestamp, category, Math.round(amount), description, isCarrier ? 1 : 0);
       };
-      const earn = (category, amount, description) => add(category, Math.abs(amount ?? 0), description);
-      const spend = (category, amount, description) => add(category, -Math.abs(amount ?? 0), description);
+      const earn = (category, amount, description, isCarrier) => add(category, Math.abs(amount ?? 0), description, isCarrier);
+      const spend = (category, amount, description, isCarrier) => add(category, -Math.abs(amount ?? 0), description, isCarrier);
+      // Whether this market is a fleet carrier's (the station the commander is docked at).
+      const isCarrierMarket = () => getDockedLocation(moduleState, data.MarketID)?.stationType === 'FleetCarrier';
 
       switch (event) {
         case 'LoadGame':
@@ -106,10 +113,10 @@ export default defineStatModule({
         }
 
         case 'MarketSell':
-          earn(data.BlackMarket ? 'Black market' : 'Commodity sales', data.TotalSale, `${data.Count ?? ''} × ${data.Type_Localised ?? data.Type ?? 'cargo'}`.trim());
+          earn(data.BlackMarket ? 'Black market' : 'Commodity sales', data.TotalSale, `${data.Count ?? ''} × ${data.Type_Localised ?? data.Type ?? 'cargo'}`.trim(), isCarrierMarket());
           return;
         case 'MarketBuy':
-          spend('Commodity purchases', data.TotalCost, `${data.Count ?? ''} × ${data.Type_Localised ?? data.Type ?? 'cargo'}`.trim());
+          spend('Commodity purchases', data.TotalCost, `${data.Count ?? ''} × ${data.Type_Localised ?? data.Type ?? 'cargo'}`.trim(), isCarrierMarket());
           return;
         case 'MissionCompleted':
           earn('Missions', data.Reward, data.LocalisedName ?? data.Name ?? null);
@@ -237,21 +244,22 @@ export default defineStatModule({
       SELECT substr(timestamp, 1, 7) AS month,
         SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) AS income,
         SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END) AS spending
-      FROM credit_transactions WHERE commander_id = ? AND category != 'Carrier bank'
+      FROM credit_transactions WHERE commander_id = ? AND category != 'Carrier bank' AND is_carrier <= ?
       GROUP BY month ORDER BY month
     `);
     const selectCategories = database.prepare(`
       SELECT category, SUM(amount) AS total, COUNT(*) AS count, MAX(ABS(amount)) AS largest
-      FROM credit_transactions WHERE commander_id = ? AND timestamp >= ?
+      FROM credit_transactions WHERE commander_id = ? AND timestamp >= ? AND is_carrier <= ?
       GROUP BY category ORDER BY ABS(SUM(amount)) DESC
     `);
     const selectLargest = database.prepare(`
       SELECT timestamp, category, amount, description FROM credit_transactions
-      WHERE commander_id = ? AND category != 'Carrier bank' ORDER BY ABS(amount) DESC LIMIT 10
+      WHERE commander_id = ? AND category != 'Carrier bank' AND is_carrier <= ? ORDER BY ABS(amount) DESC LIMIT 10
     `);
     const selectStatistics = database.prepare('SELECT data, updated_at FROM credit_statistics WHERE commander_id = ?');
 
-    // GET /api/stats/credits?commander=<id>&since=<ISO date, for the categories>
+    // GET /api/stats/credits?commander=<id>&since=<ISO date, for the categories>&excludeCarrier=true
+    // excludeCarrier leaves out commodity trades at fleet carrier markets (not the balance history).
     router.get('/', (request, response) => {
       const commanderId = getCommanderIdFilter(request.query);
       if (commanderId === null) {
@@ -259,14 +267,16 @@ export default defineStatModule({
         return;
       }
       const since = typeof request.query.since === 'string' && request.query.since ? request.query.since : '0000';
+      // is_carrier <= 0 keeps only non-carrier trades; <= 1 keeps everything.
+      const maxCarrierFlag = request.query.excludeCarrier === 'true' ? 0 : 1;
       const balances = selectBalances.all(commanderId);
       const statistics = selectStatistics.get(commanderId);
       response.json({
         balance: balances.at(-1) ?? null,
         balanceHistory: thinBalances(balances),
-        monthly: selectMonthly.all(commanderId),
-        categories: selectCategories.all(commanderId, since),
-        largest: selectLargest.all(commanderId),
+        monthly: selectMonthly.all(commanderId, maxCarrierFlag),
+        categories: selectCategories.all(commanderId, since, maxCarrierFlag),
+        largest: selectLargest.all(commanderId, maxCarrierFlag),
         statistics: statistics ? { ...JSON.parse(statistics.data), updatedAt: statistics.updated_at } : null,
       });
     });

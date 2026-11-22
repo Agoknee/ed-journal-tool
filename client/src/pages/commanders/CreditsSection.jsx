@@ -47,12 +47,29 @@ const LIFETIME_SPENDING = [
 ];
 
 /** Balance over time, income and spending by month and category, the biggest transactions and lifetime totals. */
+const EXCLUDE_CARRIER_STORAGE_KEY = 'credits.excludeCarrierTrades';
+
 export default function CreditsSection({ commanderId, picker, focusRequest }) {
   const [periodId, setPeriodId] = useState('all');
+  const [isCarrierExcluded, setIsCarrierExcluded] = useState(readExcludeCarrier);
+  const changeCarrierExcluded = (isExcluded) => {
+    setIsCarrierExcluded(isExcluded);
+    try {
+      localStorage.setItem(EXCLUDE_CARRIER_STORAGE_KEY, String(isExcluded));
+    } catch {
+      // Storage may be unavailable; the choice still applies for this visit.
+    }
+  };
   const [todayMs] = useState(() => Date.now());
   const period = CATEGORY_PERIODS.find((candidate) => candidate.id === periodId);
   const since = period.days ? new Date(todayMs - period.days * 86_400_000).toISOString().slice(0, 10) : '';
-  const creditsRequest = useApi(commanderId ? '/api/stats/credits' : null, { commander: commanderId, since });
+  const creditsRequest = useApi(commanderId ? '/api/stats/credits' : null, { commander: commanderId, since, excludeCarrier: isCarrierExcluded });
+  // Every commander's latest balance and their fleet carriers' balances, for the carrier and combined cards.
+  const assetsRequest = useApi('/api/stats/assets', { commander: 'all' });
+  const carriersRequest = useApi('/api/stats/carriers', { commander: 'all' });
+  const carrierBalances = getCarrierBalances(carriersRequest.data);
+  const commanderCarrierBalance = carrierBalances.byCommander.get(commanderId) ?? null;
+  const combinedCredits = assetsRequest.data?.combined.credits ?? null;
 
   // Asked to show a commander's credits (from their card): scroll here once their credits have loaded.
   const handledFocusRef = useRef(null);
@@ -69,7 +86,15 @@ export default function CreditsSection({ commanderId, picker, focusRequest }) {
       id="commanders-credits"
       title="Credits"
       description="The exact balance is only logged at login and on carrier transfers; between those, the transactions the journal logs show where credits came from and went."
-      actions={picker}
+      actions={(
+        <>
+          <label className="checkbox" title="Leave out commodity buys and sells at fleet carrier markets (the balance chart is unaffected)">
+            <input type="checkbox" checked={isCarrierExcluded} onChange={(changeEvent) => changeCarrierExcluded(changeEvent.target.checked)} />
+            Exclude carrier trades
+          </label>
+          {picker}
+        </>
+      )}
     >
       <LoadingState requestState={creditsRequest}>
         {({ balance, balanceHistory, monthly, categories, largest, statistics }) => {
@@ -82,7 +107,19 @@ export default function CreditsSection({ commanderId, picker, focusRequest }) {
           return (
             <>
               <StatGrid>
-                <StatCard label="Balance" value={formatCredits(balance?.balance)} tone="accent" detail={balance ? `at ${balance.source === 'login' ? 'login' : 'carrier transfer'}, ${formatDateTime(balance.timestamp)}` : null} />
+                <StatCard
+                  label="Balance"
+                  value={formatCredits(balance?.balance)}
+                  tone="accent"
+                  detail={commanderCarrierBalance === null ? 'No fleet carrier' : `Carrier ${formatCredits(commanderCarrierBalance)}`}
+                  title={balance ? `As of ${balance.source === 'login' ? 'login' : 'a carrier transfer'}, ${formatDateTime(balance.timestamp)}` : undefined}
+                />
+                <StatCard
+                  label="All commanders"
+                  value={formatCredits(combinedCredits)}
+                  detail={`Carriers ${formatCredits(carrierBalances.total)}`}
+                  title="Every commander’s last known balance added together, and the balances of their fleet carriers"
+                />
                 <StatCard label="Total wealth" value={formatCredits(statistics?.Bank_Account?.Current_Wealth)} detail="credits and assets, per the game" />
                 <StatCard label={`Income · ${period.label.toLowerCase()}`} value={formatCredits(totalIncome)} />
                 <StatCard label={`Spending · ${period.label.toLowerCase()}`} value={formatCredits(totalSpending)} />
@@ -102,7 +139,7 @@ export default function CreditsSection({ commanderId, picker, focusRequest }) {
 
               <div className="chart-card">
                 <h3 className="subsection-title">Income and spending by month</h3>
-                <p className="muted small">The last {recentMonths.length} months. Carrier bank transfers aren’t counted, as they only move credits.</p>
+                <p className="muted small">The last {recentMonths.length} months. Carrier bank transfers aren’t counted, as they only move credits{isCarrierExcluded ? '; nor are trades at fleet carrier markets' : ''}.</p>
                 <ColumnChart
                   label="Income and spending by month"
                   series={MONTHLY_SERIES}
@@ -212,4 +249,30 @@ function LifetimeTable({ tableId, title, rows, statistics }) {
 function formatMonth(month, isShort) {
   const [year, monthNumber] = month.split('-').map(Number);
   return new Date(Date.UTC(year, monthNumber - 1, 1)).toLocaleDateString(undefined, isShort ? { month: 'short', year: '2-digit', timeZone: 'UTC' } : { month: 'long', year: 'numeric', timeZone: 'UTC' });
+}
+
+function readExcludeCarrier() {
+  try {
+    return localStorage.getItem(EXCLUDE_CARRIER_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Fleet carrier balances from the carriers overview: per owning commander (summed if they own more
+ * than one) and in total. Squadron carriers are left out, as their bank is the squadron's.
+ */
+function getCarrierBalances(carriersOverview) {
+  const balanceById = new Map((carriersOverview?.carriers ?? []).map((carrier) => [carrier.carrier_id, carrier.finance?.carrierBalance ?? null]));
+  const byCommander = new Map();
+  let total = 0;
+  for (const status of carriersOverview?.commanderStatuses ?? []) {
+    const balances = status.fleetCarrierIds.map((carrierId) => balanceById.get(carrierId)).filter((balance) => Number.isFinite(balance));
+    if (balances.length === 0) continue;
+    const sum = balances.reduce((runningTotal, balance) => runningTotal + balance, 0);
+    byCommander.set(status.commanderId, sum);
+    total += sum;
+  }
+  return { byCommander, total };
 }
