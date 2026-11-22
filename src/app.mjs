@@ -8,6 +8,7 @@ import { openDatabase } from './database/database.mjs';
 import { EventHub } from './events/event-hub.mjs';
 import { JournalIngester } from './journals/journal-ingester.mjs';
 import { JournalMonitor } from './journals/journal-monitor.mjs';
+import { StatusMonitor } from './journals/status-monitor.mjs';
 import { logger } from './logger.mjs';
 import { createServer, serveBuiltClient } from './server/server.mjs';
 import { serveClientWithVite } from './server/vite-dev-client.mjs';
@@ -42,6 +43,7 @@ export async function startApp() {
   const journalMonitor = new JournalMonitor({ ingester, statsEngine, eventHub });
   const clockMonitor = new ClockMonitor({ eventHub });
   const tickMonitor = new TickMonitor({ database, eventHub });
+  const statusMonitor = new StatusMonitor({ database, journalDirectory: options.journaldir, eventHub });
 
   const app = createServer({
     database,
@@ -49,6 +51,7 @@ export async function startApp() {
     statsEngine,
     journalMonitor,
     clockMonitor,
+    statusMonitor,
     eventHub,
     journalDirectory: options.journaldir,
   });
@@ -80,6 +83,7 @@ export async function startApp() {
   tickMonitor.start();
   await journalMonitor.scanJournalDirectory();
   journalMonitor.start();
+  statusMonitor.start();
 
   let isShuttingDown = false;
   async function shutDown() {
@@ -89,6 +93,7 @@ export async function startApp() {
     await journalMonitor.stop();
     clockMonitor.stop();
     tickMonitor.stop();
+    statusMonitor.stop();
     await viteServer?.close();
     httpServer.closeAllConnections();
     httpServer.close();

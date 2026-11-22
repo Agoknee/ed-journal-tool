@@ -47,6 +47,15 @@ const ICON_PATHS = {
     </>
   ),
   // Targeting reticle: outer ring, inner ring, crosshair ticks and a center dot
+  // Mission data pad: a clipboard with a checklist, the top task ticked
+  missions: (
+    <>
+      <rect className="nav-icon-fill" x="4.5" y="3.5" width="15" height="18" rx="2" />
+      <path d="M9 2.5h6v2.5H9z" />
+      <path d="M7.5 9.5l1.3 1.3 2.2-2.6" />
+      <path d="M13 9.5h3.5M7.5 14h2M13 14h3.5M7.5 18h2M13 18h3.5" />
+    </>
+  ),
   bgs: (
     <>
       <circle className="nav-icon-fill" cx="12" cy="12" r="8" />

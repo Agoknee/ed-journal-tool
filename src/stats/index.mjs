@@ -9,10 +9,12 @@ import assetsModule from './modules/assets.mjs';
 import bgsModule from './modules/bgs.mjs';
 import carriersModule from './modules/carriers.mjs';
 import chatModule from './modules/chat.mjs';
+import combatModule from './modules/combat.mjs';
 import commandersModule from './modules/commanders.mjs';
 import commoditiesModule from './modules/commodities.mjs';
 import fuelDepositsModule from './modules/fuel-deposits.mjs';
 import marketsModule from './modules/markets.mjs';
+import missionsModule from './modules/missions.mjs';
 import travelModule from './modules/travel.mjs';
 
 export const statModules = [
@@ -25,4 +27,6 @@ export const statModules = [
   fuelDepositsModule,
   chatModule,
   bgsModule,
+  missionsModule,
+  combatModule,
 ];

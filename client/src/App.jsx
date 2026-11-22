@@ -12,6 +12,7 @@ import TradePage from './pages/TradePage.jsx';
 import TravelPage from './pages/TravelPage.jsx';
 import DepotsPage from './pages/DepotsPage.jsx';
 import JournalsPage from './pages/JournalsPage.jsx';
+import MissionsPage from './pages/MissionsPage.jsx';
 
 // Sub-sections are listed under the active page in the sidebar. Each scrolls to the element with
 // its targetId, or to the top of the page when there's none.
@@ -67,6 +68,17 @@ const PAGES = [
       { label: 'Activity' },
       { label: 'Tick History', targetId: 'bgs-tick-history' },
       { label: 'Manual Adjustments', targetId: 'bgs-adjustments' },
+    ],
+  },
+  {
+    id: 'missions',
+    label: 'Missions',
+    component: MissionsPage,
+    subSections: [
+      { label: 'Overview' },
+      { label: 'Massacre Stacks', targetId: 'missions-massacre' },
+      { label: 'Mining & Cargo', targetId: 'missions-cargo' },
+      { label: 'History', targetId: 'missions-history' },
     ],
   },
   { id: 'chat', label: 'Chat', component: ChatPage },

@@ -7,22 +7,32 @@ import { useApi } from '../hooks/use-api.js';
 import { formatDateTime, formatNumber, formatSystemName } from '../format.js';
 
 const CARRIERS_PER_PAGE = 10;
+const EXCLUDE_OWNED_STORAGE_KEY = 'depots.excludeOwned';
 
 export default function DepotsPage({ commanderFilter }) {
   const { filters, updateFilter, queryParams } = useListFilters();
-  const [isOwnedExcluded, setIsOwnedExcluded] = useState(false);
+  const [isOwnedExcluded, setIsOwnedExcluded] = useState(readExcludeOwned);
   const filterParams = { commander: commanderFilter, ...queryParams, excludeOwned: isOwnedExcluded };
   const tableState = useTableState({ tableId: 'depots.deposits', defaultSort: 'timestamp', resetKey: JSON.stringify(filterParams) });
 
   const totalsRequest = useApi('/api/stats/fuel-deposits/totals', filterParams);
   const depositsRequest = useApi('/api/stats/fuel-deposits/deposits', { ...filterParams, ...tableState.queryParams });
 
+  const changeOwnedExcluded = (isExcluded) => {
+    setIsOwnedExcluded(isExcluded);
+    try {
+      localStorage.setItem(EXCLUDE_OWNED_STORAGE_KEY, String(isExcluded));
+    } catch {
+      // Storage may be unavailable; the choice still applies for this visit.
+    }
+  };
+
   return (
     <>
       <Section title="Depot fuel deposits" description="Tritium deposited into carrier fuel depots.">
         <FilterBar filters={filters} updateFilter={updateFilter} searchPlaceholder="Search carrier name, callsign or system…">
           <label className="checkbox" title="Hide deposits to fleet carriers owned by any of your commanders">
-            <input type="checkbox" checked={isOwnedExcluded} onChange={(changeEvent) => setIsOwnedExcluded(changeEvent.target.checked)} />
+            <input type="checkbox" checked={isOwnedExcluded} onChange={(changeEvent) => changeOwnedExcluded(changeEvent.target.checked)} />
             Exclude Owned Carriers
           </label>
         </FilterBar>
@@ -78,8 +88,35 @@ export default function DepotsPage({ commanderFilter }) {
           columns={[
             { key: 'timestamp', label: 'Time', sortKey: 'timestamp', render: (deposit) => formatDateTime(deposit.timestamp) },
             { key: 'commander_name', label: 'Commander' },
-            { key: 'carrier_name', label: 'Carrier', sortKey: 'carrier' },
-            { key: 'star_system', label: 'System', render: (row) => formatSystemName(row.star_system) ?? '—' },
+            {
+              key: 'carrier_name',
+              label: 'Carrier',
+              sortKey: 'carrier',
+              render: (deposit) => (
+                <button
+                  type="button"
+                  className="link-button link-button-plain"
+                  title="Search for this carrier"
+                  onClick={() => updateFilter('search', deposit.carrier_name)}
+                >
+                  {deposit.carrier_name}
+                </button>
+              ),
+            },
+            {
+              key: 'star_system',
+              label: 'System',
+              render: (deposit) => deposit.star_system ? (
+                <button
+                  type="button"
+                  className="link-button link-button-plain"
+                  title="Search for this system"
+                  onClick={() => updateFilter('search', deposit.star_system)}
+                >
+                  {formatSystemName(deposit.star_system)}
+                </button>
+              ) : '—',
+            },
             { key: 'amount', label: 'Amount (t)', align: 'right', sortKey: 'amount' },
             { key: 'carrier_fuel_total', label: 'Depot total (t)', align: 'right' },
           ]}
@@ -87,4 +124,12 @@ export default function DepotsPage({ commanderFilter }) {
       </Section>
     </>
   );
+}
+
+function readExcludeOwned() {
+  try {
+    return localStorage.getItem(EXCLUDE_OWNED_STORAGE_KEY) === 'true';
+  } catch {
+    return false;
+  }
 }

@@ -16,10 +16,11 @@ import { createSqlRoutes } from './routes/sql-routes.mjs';
  * @param {string} options.databasePath
  * @param {import('../stats/stats-engine.mjs').StatsEngine} options.statsEngine
  * @param {import('../journals/journal-monitor.mjs').JournalMonitor} options.journalMonitor
+ * @param {import('../journals/status-monitor.mjs').StatusMonitor} options.statusMonitor
  * @param {import('../events/event-hub.mjs').EventHub} options.eventHub
  * @param {string} options.journalDirectory
  */
-export function createServer({ database, databasePath, statsEngine, journalMonitor, clockMonitor, eventHub, journalDirectory }) {
+export function createServer({ database, databasePath, statsEngine, journalMonitor, clockMonitor, statusMonitor, eventHub, journalDirectory }) {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '1mb' }));
@@ -43,6 +44,12 @@ export function createServer({ database, databasePath, statsEngine, journalMonit
       clock: clockMonitor.status,
       statModules: statsEngine.getModuleSummaries(),
     });
+  });
+
+  // GET /api/ship-status -> { commanders: [...] }: the live ship state from the game's Status.json,
+  // for each playing commander its writes have been matched to
+  apiRouter.get('/ship-status', (request, response) => {
+    response.json(statusMonitor.getStatus());
   });
 
   apiRouter.use('/', createJournalRoutes(database));
