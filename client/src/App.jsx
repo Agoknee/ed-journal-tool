@@ -17,7 +17,19 @@ import MissionsPage from './pages/MissionsPage.jsx';
 // Sub-sections are listed under the active page in the sidebar. Each scrolls to the element with
 // its targetId, or to the top of the page when there's none.
 const PAGES = [
-  { id: 'commanders', label: 'Commanders', component: CommandersPage },
+  {
+    id: 'commanders',
+    label: 'Commanders',
+    component: CommandersPage,
+    subSections: [
+      { label: 'Overview' },
+      { label: 'Fleet', targetId: 'commanders-fleet' },
+      { label: 'Inventory', targetId: 'commanders-inventory' },
+      { label: 'Ranks & Reputation', targetId: 'commanders-ranks' },
+      { label: 'Credits', targetId: 'commanders-credits' },
+      { label: 'Engineers', targetId: 'commanders-engineers' },
+    ],
+  },
   {
     id: 'carriers',
     label: 'Carriers',

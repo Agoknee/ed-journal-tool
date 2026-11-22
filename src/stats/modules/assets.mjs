@@ -1,22 +1,31 @@
 import { Router } from 'express';
 import { defineStatModule } from '../define-stat-module.mjs';
+import { describeMaterial } from '../material-data.mjs';
 import { getCommanderIdFilter } from '../query-helpers.mjs';
 
 /**
  * Latest snapshot of each commander's assets: credits, ships, stored modules, materials,
  * on-foot inventory and cargo.
+ *
+ * Materials are listed in full only at login; changes after that (collecting, discarding, trading,
+ * crafting, synthesis, engineer unlocks, tech brokers and mission rewards) are applied to the
+ * snapshot so the counts stay current.
  */
 export default defineStatModule({
   name: 'assets',
   title: 'Commander Assets',
   description: 'Credits, ships, stored modules, materials, ship locker and cargo (latest snapshot of each).',
-  version: 1,
-  events: ['LoadGame', 'Statistics', 'CarrierBankTransfer', 'Loadout', 'StoredShips', 'StoredModules', 'Materials', 'ShipLocker', 'Cargo'],
+  version: 3,
+  events: [
+    'LoadGame', 'Statistics', 'CarrierBankTransfer', 'Loadout', 'StoredShips', 'StoredModules', 'Materials', 'ShipLocker', 'Cargo',
+    'Backpack', 'MaterialCollected', 'MaterialDiscarded', 'MaterialTrade', 'EngineerCraft', 'Synthesis', 'TechnologyBroker',
+    'EngineerContribution', 'MissionCompleted',
+  ],
   ownedObjects: [{ type: 'table', name: 'commander_assets' }],
   schemaSql: `
     CREATE TABLE IF NOT EXISTS commander_assets (
       commander_id  INTEGER NOT NULL REFERENCES commanders(id),
-      asset_type    TEXT NOT NULL,   -- balance | current_ship | stored_ships | stored_modules | materials | ship_locker | cargo
+      asset_type    TEXT NOT NULL,   -- balance | current_ship | stored_ships | stored_modules | materials | ship_locker | backpack | cargo
       data          TEXT NOT NULL,
       updated_at    TEXT,
       PRIMARY KEY (commander_id, asset_type)
@@ -38,6 +47,31 @@ export default defineStatModule({
       const existingRow = selectAsset.get(commanderId, 'balance');
       const existingBalance = existingRow ? JSON.parse(existingRow.data) : {};
       saveAsset(commanderId, 'balance', timestamp, { ...existingBalance, ...balanceChanges });
+    };
+
+    // Adds (or with a negative count, takes away) materials from the snapshot. Without a category,
+    // the material is looked up in every category.
+    const changeMaterials = (commanderId, timestamp, changes) => {
+      const existingRow = selectAsset.get(commanderId, 'materials');
+      if (!existingRow) return;
+      const materials = JSON.parse(existingRow.data);
+      for (const { name, localisedName, category, count } of changes) {
+        const key = String(name ?? '').toLowerCase();
+        if (!key || !Number.isFinite(count) || count === 0) continue;
+        const categoryKey = toMaterialCategory(category);
+        const categoryKeys = categoryKey ? [categoryKey] : ['raw', 'manufactured', 'encoded'];
+        let material = categoryKeys.flatMap((candidate) => materials[candidate] ?? []).find((item) => item.key === key);
+        if (!material && categoryKey && count > 0) {
+          material = { key, name: localisedName ?? name, count: 0 };
+          materials[categoryKey] = [...(materials[categoryKey] ?? []), material];
+        }
+        if (!material) continue;
+        // The game won't hold more than the grade's cap.
+        const maxCount = describeMaterial(key)?.maxCount ?? Infinity;
+        material.count = Math.min(maxCount, Math.max(0, material.count + count));
+        if (localisedName && material.name === material.key) material.name = localisedName;
+      }
+      saveAsset(commanderId, 'materials', timestamp, materials);
     };
 
     return ({ commanderId, event, timestamp, data }) => {
@@ -110,14 +144,49 @@ export default defineStatModule({
           break;
 
         case 'ShipLocker':
-          // ShipLocker events without contents just point at ShipLocker.json; ignore those.
+        case 'Backpack':
+          // Events without contents just point at ShipLocker.json/Backpack.json; ignore those.
           if (Array.isArray(data.Items)) {
-            saveAsset(commanderId, 'ship_locker', timestamp, {
+            saveAsset(commanderId, event === 'Backpack' ? 'backpack' : 'ship_locker', timestamp, {
               items: summarizeMaterials(data.Items),
               components: summarizeMaterials(data.Components),
               consumables: summarizeMaterials(data.Consumables),
               data: summarizeMaterials(data.Data),
             });
+          }
+          break;
+
+        case 'MaterialCollected':
+          changeMaterials(commanderId, timestamp, [{ name: data.Name, localisedName: data.Name_Localised, category: data.Category, count: data.Count ?? 0 }]);
+          break;
+        case 'MaterialDiscarded':
+          changeMaterials(commanderId, timestamp, [{ name: data.Name, localisedName: data.Name_Localised, category: data.Category, count: -(data.Count ?? 0) }]);
+          break;
+        case 'MaterialTrade':
+          changeMaterials(commanderId, timestamp, [
+            { name: data.Paid?.Material, localisedName: data.Paid?.Material_Localised, category: data.Paid?.Category, count: -(data.Paid?.Quantity ?? 0) },
+            { name: data.Received?.Material, localisedName: data.Received?.Material_Localised, category: data.Received?.Category, count: data.Received?.Quantity ?? 0 },
+          ]);
+          break;
+        case 'EngineerCraft':
+          changeMaterials(commanderId, timestamp, (data.Ingredients ?? []).map((item) => ({ name: item.Name, localisedName: item.Name_Localised, count: -(item.Count ?? 0) })));
+          break;
+        case 'Synthesis':
+          changeMaterials(commanderId, timestamp, (data.Materials ?? []).map((item) => ({ name: item.Name, localisedName: item.Name_Localised, count: -(item.Count ?? 0) })));
+          break;
+        case 'TechnologyBroker':
+          changeMaterials(commanderId, timestamp, (data.Materials ?? []).map((item) => ({ name: item.Name, localisedName: item.Name_Localised, category: item.Category, count: -(item.Count ?? 0) })));
+          break;
+        case 'EngineerContribution':
+          if (data.Type === 'Materials') {
+            changeMaterials(commanderId, timestamp, [{ name: data.Material, localisedName: data.Material_Localised, count: -(data.Quantity ?? 0) }]);
+          }
+          break;
+        case 'MissionCompleted':
+          if (Array.isArray(data.MaterialsReward)) {
+            changeMaterials(commanderId, timestamp, data.MaterialsReward.map((item) => ({
+              name: item.Name, localisedName: item.Name_Localised, category: item.Category_Localised ?? item.Category, count: item.Count ?? 0,
+            })));
           }
           break;
 
@@ -185,6 +254,16 @@ export default defineStatModule({
         response.status(404).json({ error: 'Commander not found' });
         return;
       }
+      if (commanderAssets.materials) {
+        // Each material with its grade, family (material trader group) and storage cap.
+        commanderAssets.materials = Object.fromEntries(Object.entries(commanderAssets.materials).map(([category, items]) => [
+          category,
+          items.map((item) => {
+            const info = describeMaterial(item.key);
+            return { ...item, grade: info?.grade ?? null, family: info?.family ?? guessSpecialFamily(item.key), maxCount: info?.maxCount ?? null };
+          }),
+        ]));
+      }
       response.json(commanderAssets);
     });
 
@@ -206,9 +285,16 @@ function summarizeStoredShip(storedShip) {
 
 function summarizeMaterials(materials) {
   return (materials ?? []).map((material) => ({
+    key: String(material.Name ?? '').toLowerCase(),
     name: material.Name_Localised ?? material.Name,
     count: material.Count,
   }));
+}
+
+/** "Raw", "$MICRORESOURCE_CATEGORY_Encoded;" -> "raw", "encoded"; null when it isn't a material category. */
+function toMaterialCategory(category) {
+  const match = /(raw|manufactured|encoded)/i.exec(category ?? '');
+  return match ? match[1].toLowerCase() : null;
 }
 
 /** Combines the current ship and stored ships into one fleet list. */
@@ -257,6 +343,13 @@ function summarizeCommanderAssets(commanderAssets) {
 
 function sumBy(rows, propertyName) {
   return rows.reduce((total, row) => total + (row[propertyName] ?? 0), 0);
+}
+
+/** Guardian and Thargoid materials without a known grade still group with their kind. */
+function guessSpecialFamily(key) {
+  if (/^guardian_|^ancient/.test(key ?? '')) return 'Guardian';
+  if (/^tg_|^unknown/.test(key ?? '')) return 'Thargoid';
+  return 'Other';
 }
 
 function toCamelCase(snakeCaseText) {

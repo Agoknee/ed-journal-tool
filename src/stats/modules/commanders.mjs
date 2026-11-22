@@ -136,6 +136,7 @@ export default defineStatModule({
       const profiles = parseJsonColumns(commanderRows, ['ranks', 'rank_progress', 'reputation']).map((profile) => ({
         ...profile,
         rank_names: describeRanks(profile.ranks ?? {}),
+        next_rank_names: describeRanks(profile.ranks ?? {}, 1),
       }));
       response.json({ commanders: profiles });
     });
@@ -149,9 +150,14 @@ function pickRankValues(data) {
   return rankValues;
 }
 
-function describeRanks(ranks) {
+/** Rank names by type; with an offset of 1, the next rank's name (null at the top rank). */
+function describeRanks(ranks, offset = 0) {
   return Object.fromEntries(
-    Object.entries(ranks).map(([rankType, rankValue]) => [rankType, RANK_NAMES[rankType]?.[rankValue] ?? String(rankValue)]),
+    Object.entries(ranks).map(([rankType, rankValue]) => {
+      const names = RANK_NAMES[rankType];
+      if (offset) return [rankType, names?.[rankValue + offset] ?? null];
+      return [rankType, names?.[rankValue] ?? String(rankValue)];
+    }),
   );
 }
 

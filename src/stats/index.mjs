@@ -12,9 +12,13 @@ import chatModule from './modules/chat.mjs';
 import combatModule from './modules/combat.mjs';
 import commandersModule from './modules/commanders.mjs';
 import commoditiesModule from './modules/commodities.mjs';
+import creditsModule from './modules/credits.mjs';
+import engineersModule from './modules/engineers.mjs';
+import fleetModule from './modules/fleet.mjs';
 import fuelDepositsModule from './modules/fuel-deposits.mjs';
 import marketsModule from './modules/markets.mjs';
 import missionsModule from './modules/missions.mjs';
+import reputationModule from './modules/reputation.mjs';
 import travelModule from './modules/travel.mjs';
 
 export const statModules = [
@@ -29,4 +33,8 @@ export const statModules = [
   bgsModule,
   missionsModule,
   combatModule,
+  fleetModule,
+  engineersModule,
+  reputationModule,
+  creditsModule,
 ];

@@ -1,12 +1,18 @@
 import { useState } from 'react';
 import CopyableText from '../components/CopyableText.jsx';
-import DataTable from '../components/DataTable.jsx';
-import { Badge, KeyValueList, LoadingState, Section, StatCard, StatGrid, Tabs } from '../components/ui.jsx';
+import { Badge, KeyValueList, LoadingState, Section, StatCard, StatGrid } from '../components/ui.jsx';
 import { useApi } from '../hooks/use-api.js';
 import {
-  formatCredits, formatDateTime, formatDuration, formatNumber, formatRelativeTime, formatShipName,
+  formatCredits, formatDuration, formatNumber, formatRelativeTime, formatShipName,
   formatSystemName,
 } from '../format.js';
+import CreditsSection from './commanders/CreditsSection.jsx';
+import EngineersSection from './commanders/EngineersSection.jsx';
+import FleetSection from './commanders/FleetSection.jsx';
+import InventorySection from './commanders/InventorySection.jsx';
+import RanksSection from './commanders/RanksSection.jsx';
+
+const DETAIL_COMMANDER_STORAGE_KEY = 'commanders.detailCommander';
 
 export default function CommandersPage({ commanderFilter }) {
   const commanderParams = { commander: commanderFilter };
@@ -18,6 +24,34 @@ export default function CommandersPage({ commanderFilter }) {
   const locationsByCommander = indexBy(locationsRequest.data?.locations, 'commander_id');
   const assetsByCommander = indexBy(assetsRequest.data?.perCommander, 'commanderId');
   const carrierStatusByCommander = indexBy(carriersRequest.data?.commanderStatuses, 'commanderId');
+
+  // The detail sections show one commander: the one chosen at the top of the app, or with all
+  // commanders shown, the one picked here (remembered in the browser).
+  const [pickedCommanderId, setPickedCommanderId] = useState(readStoredCommanderId);
+  const profiles = sortCommandersForDisplay(profilesRequest.data?.commanders ?? []);
+  const detailCommanderId = commanderFilter !== 'all'
+    ? Number(commanderFilter)
+    : profiles.some((profile) => profile.id === pickedCommanderId) ? pickedCommanderId : profiles[0]?.id ?? null;
+  const pickCommander = (commanderId) => {
+    setPickedCommanderId(commanderId);
+    try {
+      localStorage.setItem(DETAIL_COMMANDER_STORAGE_KEY, String(commanderId));
+    } catch {
+      // Storage may be unavailable; the choice still applies for this visit.
+    }
+  };
+  // Clicking a commander card's ship or credits shows that commander's details and scrolls to them
+  // once they've loaded (the sections act on the request; the nonce makes each click count).
+  const [focusRequest, setFocusRequest] = useState(null);
+  const showDetails = (commanderId, target) => {
+    if (commanderFilter === 'all' && commanderId !== detailCommanderId) pickCommander(commanderId);
+    setFocusRequest((previous) => ({ target, commanderId, nonce: (previous?.nonce ?? 0) + 1 }));
+  };
+  const picker = commanderFilter === 'all' && profiles.length > 1 ? (
+    <select className="commander-picker" aria-label="Commander" value={detailCommanderId ?? ''} onChange={(changeEvent) => pickCommander(Number(changeEvent.target.value))}>
+      {profiles.map((profile) => <option key={profile.id} value={profile.id}>CMDR {profile.name}</option>)}
+    </select>
+  ) : null;
 
   return (
     <>
@@ -36,7 +70,7 @@ export default function CommandersPage({ commanderFilter }) {
         </LoadingState>
       </Section>
 
-      <Section title="Commander Details" description="Click a value to copy it to the clipboard.">
+      <Section title="Commander Details" description="Click a value to copy it to the clipboard, or the ship or credits to see their details below.">
         <LoadingState requestState={profilesRequest} emptyMessage="No commanders found yet.">
           {({ commanders }) => commanders.length > 0 && (
             <div className="card-grid">
@@ -47,6 +81,8 @@ export default function CommandersPage({ commanderFilter }) {
                   location={locationsByCommander[profile.id]}
                   assets={assetsByCommander[profile.id]}
                   carrierStatus={carrierStatusByCommander[profile.id]?.carrierStatus}
+                  onShowShip={() => showDetails(profile.id, 'loadout')}
+                  onShowCredits={() => showDetails(profile.id, 'credits')}
                 />
               ))}
             </div>
@@ -54,12 +90,16 @@ export default function CommandersPage({ commanderFilter }) {
         </LoadingState>
       </Section>
 
-      {commanderFilter !== 'all' && <AssetDetailsSection commanderId={commanderFilter} />}
+      <FleetSection commanderId={detailCommanderId} picker={picker} focusRequest={focusRequest} />
+      <InventorySection commanderId={detailCommanderId} picker={picker} />
+      <RanksSection commanderId={detailCommanderId} picker={picker} />
+      <CreditsSection commanderId={detailCommanderId} picker={picker} focusRequest={focusRequest} />
+      <EngineersSection commanderId={detailCommanderId} picker={picker} />
     </>
   );
 }
 
-function CommanderCard({ profile, location, assets, carrierStatus }) {
+function CommanderCard({ profile, location, assets, carrierStatus, onShowShip, onShowCredits }) {
   const ranks = profile.rank_names ?? {};
   const isOnline = profile.active_journal_count > 0;
   return (
@@ -86,10 +126,20 @@ function CommanderCard({ profile, location, assets, carrierStatus }) {
           : location?.body && { label: 'Near', value: location.body, copyText: location.body },
         {
           label: 'Ship',
-          value: formatShipName(profile.ship_type_name ?? profile.ship_type, profile.ship_name),
-          copyText: profile.ship_name ?? profile.ship_type_name ?? profile.ship_type,
+          value: (
+            <button type="button" className="link-button link-button-plain" onClick={onShowShip} title="Show this ship’s loadout">
+              {formatShipName(profile.ship_type_name ?? profile.ship_type, profile.ship_name)}
+            </button>
+          ),
         },
-        { label: 'Credits', value: formatCredits(assets?.credits), copyText: assets?.credits },
+        {
+          label: 'Credits',
+          value: (
+            <button type="button" className="link-button link-button-plain" onClick={onShowCredits} title="Show this commander’s credits">
+              {formatCredits(assets?.credits)}
+            </button>
+          ),
+        },
         { label: 'Fleet', value: assets ? `${assets.shipCount} ships · ${formatCredits(assets.fleetValue)}` : null },
         { label: 'Carrier', value: carrierStatus ?? 'None' },
         isOnline && { label: 'Game mode', value: profile.game_mode ? `${profile.game_mode}${profile.game_group ? ` (${profile.game_group})` : ''}` : null },
@@ -112,106 +162,6 @@ function CommanderCard({ profile, location, assets, carrierStatus }) {
   );
 }
 
-const ASSET_TABS = [
-  { id: 'fleet', label: 'Fleet' },
-  { id: 'modules', label: 'Stored modules' },
-  { id: 'materials', label: 'Materials' },
-  { id: 'locker', label: 'Ship locker' },
-  { id: 'cargo', label: 'Cargo' },
-];
-
-function AssetDetailsSection({ commanderId }) {
-  const [activeTab, setActiveTab] = useState('fleet');
-  const assetsRequest = useApi(`/api/stats/assets/${commanderId}`);
-
-  return (
-    <Section title="Assets" actions={<Tabs tabs={ASSET_TABS} activeTab={activeTab} onChange={setActiveTab} />}>
-      <LoadingState requestState={assetsRequest}>
-        {(assets) => {
-          switch (activeTab) {
-            case 'fleet':
-              return (
-                <DataTable
-                  tableId="commanders.fleet"
-                  rowKey="shipId"
-                  rows={assets.fleet}
-                  emptyMessage="No ships recorded yet (visit a shipyard to record stored ships)."
-                  columns={[
-                    { key: 'shipType', label: 'Ship', render: (ship) => <>{ship.shipType} {ship.isCurrent && <Badge tone="live">Current</Badge>}</> },
-                    { key: 'shipName', label: 'Name' },
-                    { key: 'starSystem', label: 'Location', render: (ship) => (ship.isCurrent ? 'With commander' : formatSystemName(ship.starSystem) ?? '—') },
-                    { key: 'value', label: 'Value', align: 'right', render: (ship) => formatCredits(ship.value) },
-                  ]}
-                />
-              );
-            case 'modules':
-              return (
-                <AssetTable
-                  tableId="commanders.storedModules"
-                  rows={assets.storedModules?.items}
-                  updatedAt={assets.updatedAt.storedModules}
-                  columns={[
-                    { key: 'name', label: 'Module' },
-                    { key: 'engineering', label: 'Engineering', render: (storedModule) => (storedModule.engineering ? `${storedModule.engineering} G${storedModule.engineeringLevel}` : '—') },
-                    { key: 'starSystem', label: 'Location', render: (storedModule) => formatSystemName(storedModule.starSystem) ?? '—' },
-                    { key: 'value', label: 'Value', align: 'right', render: (storedModule) => formatCredits(storedModule.value) },
-                  ]}
-                />
-              );
-            case 'materials':
-              return (
-                <AssetTable
-                  tableId="commanders.materials"
-                  rows={[
-                    ...(assets.materials?.raw ?? []).map((material) => ({ ...material, category: 'Raw' })),
-                    ...(assets.materials?.manufactured ?? []).map((material) => ({ ...material, category: 'Manufactured' })),
-                    ...(assets.materials?.encoded ?? []).map((material) => ({ ...material, category: 'Encoded' })),
-                  ]}
-                  updatedAt={assets.updatedAt.materials}
-                  columns={[{ key: 'category', label: 'Category' }, { key: 'name', label: 'Material' }, { key: 'count', label: 'Count', align: 'right' }]}
-                />
-              );
-            case 'locker':
-              return (
-                <AssetTable
-                  tableId="commanders.shipLocker"
-                  rows={['items', 'components', 'consumables', 'data'].flatMap((category) => (assets.shipLocker?.[category] ?? [])
-                    .map((lockerItem) => ({ ...lockerItem, category: category.charAt(0).toUpperCase() + category.slice(1) })))}
-                  updatedAt={assets.updatedAt.shipLocker}
-                  columns={[{ key: 'category', label: 'Category' }, { key: 'name', label: 'Item' }, { key: 'count', label: 'Count', align: 'right' }]}
-                />
-              );
-            case 'cargo':
-              return (
-                <AssetTable
-                  tableId="commanders.cargo"
-                  rows={assets.cargo?.inventory}
-                  updatedAt={assets.updatedAt.cargo}
-                  columns={[
-                    { key: 'name', label: 'Commodity' },
-                    { key: 'count', label: 'Tonnes', align: 'right' },
-                    { key: 'stolen', label: 'Stolen', align: 'right' },
-                  ]}
-                />
-              );
-            default:
-              return null;
-          }
-        }}
-      </LoadingState>
-    </Section>
-  );
-}
-
-function AssetTable({ tableId, rows, columns, updatedAt }) {
-  return (
-    <>
-      {updatedAt && <p className="muted small">Snapshot from {formatDateTime(updatedAt)}</p>}
-      <DataTable tableId={tableId} rowKey="rowId" rows={(rows ?? []).map((row, index) => ({ ...row, rowId: index }))} columns={columns} emptyMessage="Nothing recorded." />
-    </>
-  );
-}
-
 /** Active (online) commanders first, then everyone else; alphabetical within each group so cards don't move around. */
 function sortCommandersForDisplay(commanders) {
   return [...commanders].sort((first, second) => {
@@ -222,4 +172,13 @@ function sortCommandersForDisplay(commanders) {
 
 function indexBy(rows, keyName) {
   return Object.fromEntries((rows ?? []).map((row) => [row[keyName], row]));
+}
+
+function readStoredCommanderId() {
+  try {
+    const storedValue = Number(localStorage.getItem(DETAIL_COMMANDER_STORAGE_KEY));
+    return Number.isInteger(storedValue) && storedValue > 0 ? storedValue : null;
+  } catch {
+    return null;
+  }
 }

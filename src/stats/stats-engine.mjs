@@ -6,11 +6,27 @@ import { logger } from '../logger.mjs';
 const ENTRY_ID_CHUNK_SIZE = 25000;
 
 /**
+ * Bump to rebuild every module, for changes to which entries modules are given. It's added to each
+ * module's own version in the stored record.
+ * 1: journals from the Legacy (3.x) game client are left out.
+ */
+const DATA_REVISION = 1;
+const DATA_REVISION_FACTOR = 100000;
+
+/**
+ * Journals written by the Legacy game client (Horizons 3.8, its own galaxy and commander saves)
+ * have a 3.x (or older) game version in their Fileheader. Their entries would mix another save's
+ * credits, ships and ranks into the live game's, so stat modules don't see them.
+ */
+const SELECT_LEGACY_FILE_IDS_SQL = "SELECT id FROM journal_files WHERE game_version GLOB '[0-3].*'";
+
+/**
  * Runs stat modules over stored journal entries.
  *
  * Each module keeps a cursor (the last journal entry id it processed), so only new entries are
  * read on each update. Adding a module, or bumping its version, makes it rebuild from scratch.
- * Removing a module from the registry drops the tables it owned.
+ * Removing a module from the registry drops the tables it owned. Entries from Legacy game client
+ * journals are skipped.
  */
 export class StatsEngine {
   /**
@@ -66,8 +82,8 @@ export class StatsEngine {
 
     for (const statModule of this.statModules) {
       const moduleRecord = this.statements.selectModuleRecord.get(statModule.name);
-      if (!moduleRecord || moduleRecord.version !== statModule.version) {
-        const reason = moduleRecord ? `version changed ${moduleRecord.version} -> ${statModule.version}` : 'new module';
+      if (!moduleRecord || moduleRecord.version !== getStoredVersion(statModule)) {
+        const reason = moduleRecord ? `version changed ${moduleRecord.version} -> ${getStoredVersion(statModule)}` : 'new module';
         logger.debug(`Stat module "${statModule.name}" will be built from scratch (${reason}).`);
         this.dropOwnedObjects(statModule.ownedObjects);
         this.database.exec(statModule.schemaSql);
@@ -86,7 +102,7 @@ export class StatsEngine {
         if (ownedObject.type === 'table') this.database.exec(`DELETE FROM ${ownedObject.name}`);
       }
       this.statements.deleteModuleState.run(statModule.name);
-      this.statements.upsertModuleRecord.run(statModule.name, statModule.version, JSON.stringify(statModule.ownedObjects));
+      this.statements.upsertModuleRecord.run(statModule.name, getStoredVersion(statModule), JSON.stringify(statModule.ownedObjects));
     });
   }
 
@@ -164,10 +180,13 @@ export class StatsEngine {
       ORDER BY id
     `);
 
+    const legacyFileIds = new Set(this.database.prepare(SELECT_LEGACY_FILE_IDS_SQL).all().map((row) => row.id));
+
     let processedEntryCount = 0;
     for (let chunkStartId = lastEntryId; chunkStartId < maxEntryId; chunkStartId += ENTRY_ID_CHUNK_SIZE) {
       const chunkEndId = Math.min(chunkStartId + ENTRY_ID_CHUNK_SIZE, maxEntryId);
-      const journalEntries = selectEntries.all(chunkStartId, chunkEndId, ...statModule.events);
+      const journalEntries = selectEntries.all(chunkStartId, chunkEndId, ...statModule.events)
+        .filter((journalEntry) => !legacyFileIds.has(journalEntry.journalFileId));
 
       runInTransaction(this.database, () => {
         for (const journalEntry of journalEntries) {
@@ -234,4 +253,9 @@ function validateModuleDependencies(statModules) {
       }
     }
   }
+}
+
+/** The version stored for a module: its own version plus the engine's data revision. */
+function getStoredVersion(statModule) {
+  return DATA_REVISION * DATA_REVISION_FACTOR + statModule.version;
 }
