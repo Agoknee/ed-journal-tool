@@ -1,9 +1,9 @@
-import { useState } from 'react';
 import DataTable from '../components/DataTable.jsx';
 import FilterBar from '../components/FilterBar.jsx';
 import { useListFilters, useTableState } from '../hooks/use-list-filters.js';
 import { LoadingState, Section, StatCard, StatGrid } from '../components/ui.jsx';
 import { useApi } from '../hooks/use-api.js';
+import { STORED_BOOLEAN, useStoredState } from '../hooks/use-stored-state.js';
 import { formatDateTime, formatNumber, formatSystemName } from '../format.js';
 
 const CARRIERS_PER_PAGE = 10;
@@ -11,28 +11,19 @@ const EXCLUDE_OWNED_STORAGE_KEY = 'depots.excludeOwned';
 
 export default function DepotsPage({ commanderFilter }) {
   const { filters, updateFilter, queryParams } = useListFilters();
-  const [isOwnedExcluded, setIsOwnedExcluded] = useState(readExcludeOwned);
+  const [isOwnedExcluded, setIsOwnedExcluded] = useStoredState(EXCLUDE_OWNED_STORAGE_KEY, false, STORED_BOOLEAN);
   const filterParams = { commander: commanderFilter, ...queryParams, excludeOwned: isOwnedExcluded };
   const tableState = useTableState({ tableId: 'depots.deposits', defaultSort: 'timestamp', resetKey: JSON.stringify(filterParams) });
 
   const totalsRequest = useApi('/api/stats/fuel-deposits/totals', filterParams);
   const depositsRequest = useApi('/api/stats/fuel-deposits/deposits', { ...filterParams, ...tableState.queryParams });
 
-  const changeOwnedExcluded = (isExcluded) => {
-    setIsOwnedExcluded(isExcluded);
-    try {
-      localStorage.setItem(EXCLUDE_OWNED_STORAGE_KEY, String(isExcluded));
-    } catch {
-      // Storage may be unavailable; the choice still applies for this visit.
-    }
-  };
-
   return (
     <>
       <Section title="Depot fuel deposits" description="Tritium deposited into carrier fuel depots.">
         <FilterBar filters={filters} updateFilter={updateFilter} searchPlaceholder="Search carrier name, callsign or system…">
           <label className="checkbox" title="Hide deposits to fleet carriers owned by any of your commanders">
-            <input type="checkbox" checked={isOwnedExcluded} onChange={(changeEvent) => changeOwnedExcluded(changeEvent.target.checked)} />
+            <input type="checkbox" checked={isOwnedExcluded} onChange={(changeEvent) => setIsOwnedExcluded(changeEvent.target.checked)} />
             Exclude Owned Carriers
           </label>
         </FilterBar>
@@ -124,12 +115,4 @@ export default function DepotsPage({ commanderFilter }) {
       </Section>
     </>
   );
-}
-
-function readExcludeOwned() {
-  try {
-    return localStorage.getItem(EXCLUDE_OWNED_STORAGE_KEY) === 'true';
-  } catch {
-    return false;
-  }
 }

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { openReadOnlyDatabase } from '../../database/database.mjs';
+import { exposeEntryTextInSql } from '../../database/entry-compression.mjs';
 
 const MAX_RESULT_ROWS = 1000;
 
@@ -11,6 +12,7 @@ const MAX_RESULT_ROWS = 1000;
 export function createSqlRoutes(databasePath, database) {
   const router = Router();
   const readOnlyDatabase = openReadOnlyDatabase(databasePath);
+  exposeEntryTextInSql(readOnlyDatabase);
 
   // GET /api/sql/schema -> tables/views and their columns
   router.get('/schema', (request, response) => {
@@ -56,6 +58,8 @@ export function createSqlRoutes(databasePath, database) {
     }
   });
 
+  /** Closes the read-only connection (for tests; the app's process exit closes it otherwise). */
+  router.closeDatabase = () => readOnlyDatabase.close();
   return router;
 }
 

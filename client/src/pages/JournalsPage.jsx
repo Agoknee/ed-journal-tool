@@ -127,7 +127,16 @@ function JournalFilesSection({ commanderFilter, onSelectFile }) {
           { key: 'commander_name', label: 'Commander', render: (file) => file.commander_name ?? <span className="muted">{file.status_reason}</span> },
           { key: 'entry_count', label: 'Entries', align: 'right', sortKey: 'entries' },
           { key: 'file_size', label: 'Size', align: 'right', sortKey: 'size', render: (file) => formatBytes(file.file_size) },
-          { key: 'game_version', label: 'Game version', render: (file) => file.game_version ?? '—' },
+          {
+            key: 'game_version',
+            label: 'Game version',
+            render: (file) => (
+              <>
+                {file.game_version ?? '—'}
+                {file.is_legacy === 1 && <> <Badge title="Written by the Legacy game client; left out of all stats">Legacy</Badge></>}
+              </>
+            ),
+          },
           { key: 'last_timestamp', label: 'Last entry', sortKey: 'lastTimestamp', render: (file) => formatDateTime(file.last_timestamp) },
         ]}
       />

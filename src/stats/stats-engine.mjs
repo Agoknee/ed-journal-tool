@@ -1,5 +1,6 @@
 import { setImmediate as yieldToEventLoop } from 'node:timers/promises';
 import { runInTransaction } from '../database/database.mjs';
+import { getEntryCodec } from '../database/entry-compression.mjs';
 import { logger } from '../logger.mjs';
 
 /** Journal entries are processed in id ranges of this size so the server stays responsive. */
@@ -9,16 +10,17 @@ const ENTRY_ID_CHUNK_SIZE = 25000;
  * Bump to rebuild every module, for changes to which entries modules are given. It's added to each
  * module's own version in the stored record.
  * 1: journals from the Legacy (3.x) game client are left out.
+ * 2: every module tracks where the commander is docked with the shared docking state.
  */
-const DATA_REVISION = 1;
+const DATA_REVISION = 2;
 const DATA_REVISION_FACTOR = 100000;
 
 /**
- * Journals written by the Legacy game client (Horizons 3.8, its own galaxy and commander saves)
- * have a 3.x (or older) game version in their Fileheader. Their entries would mix another save's
- * credits, ships and ranks into the live game's, so stat modules don't see them.
+ * Journals written by the Legacy game client (flagged by the ingester from their game version)
+ * would mix another save's credits, ships and ranks into the live game's, so stat modules don't
+ * see them.
  */
-const SELECT_LEGACY_FILE_IDS_SQL = "SELECT id FROM journal_files WHERE game_version GLOB '[0-3].*'";
+const SELECT_LEGACY_FILE_IDS_SQL = 'SELECT id FROM journal_files WHERE is_legacy = 1';
 
 /**
  * Runs stat modules over stored journal entries.
@@ -136,7 +138,7 @@ export class StatsEngine {
       do {
         this.hasQueuedUpdate = false;
         const changedModuleNames = await this.processAllModules();
-        if (changedModuleNames.length > 0) this.eventHub.publish('stats', { modules: changedModuleNames });
+        if (changedModuleNames.length > 0) this.eventHub.publish('stats', { modules: this.withDependentModules(changedModuleNames) });
       } while (this.hasQueuedUpdate);
     })();
 
@@ -181,6 +183,7 @@ export class StatsEngine {
     `);
 
     const legacyFileIds = new Set(this.database.prepare(SELECT_LEGACY_FILE_IDS_SQL).all().map((row) => row.id));
+    const entryCodec = getEntryCodec(this.database);
 
     let processedEntryCount = 0;
     for (let chunkStartId = lastEntryId; chunkStartId < maxEntryId; chunkStartId += ENTRY_ID_CHUNK_SIZE) {
@@ -190,7 +193,7 @@ export class StatsEngine {
 
       runInTransaction(this.database, () => {
         for (const journalEntry of journalEntries) {
-          const entryData = JSON.parse(journalEntry.data);
+          const entryData = JSON.parse(entryCodec.decode(journalEntry.data));
           const moduleState = this.createModuleState(statModule.name, journalEntry.commanderId);
           try {
             processEntry({ ...journalEntry, data: entryData }, moduleState);
@@ -227,6 +230,25 @@ export class StatsEngine {
       const objectType = ownedObject.type === 'view' ? 'VIEW' : 'TABLE';
       this.database.exec(`DROP ${objectType} IF EXISTS ${ownedObject.name}`);
     }
+  }
+
+  /**
+   * The changed modules plus every module that reads from them (directly or through another, by
+   * dependsOn), so the dashboard refreshes everything whose data could have changed.
+   */
+  withDependentModules(changedModuleNames) {
+    const affected = new Set(changedModuleNames);
+    let hasGrown = true;
+    while (hasGrown) {
+      hasGrown = false;
+      for (const statModule of this.statModules) {
+        if (!affected.has(statModule.name) && statModule.dependsOn.some((dependencyName) => affected.has(dependencyName))) {
+          affected.add(statModule.name);
+          hasGrown = true;
+        }
+      }
+    }
+    return [...affected];
   }
 
   getModuleSummaries() {

@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { getEntryCodec } from '../../database/entry-compression.mjs';
 import {
   SqlFilter, addStandardFilters, getCommanderIdFilter, getOrderByClause, getPagination, runPaginatedQuery,
 } from '../../stats/query-helpers.mjs';
@@ -53,9 +54,10 @@ export function createJournalRoutes(database) {
     `).all(commanderIdFilter);
 
     const topEvents = database.prepare(`
-      SELECT event, COUNT(*) AS entry_count FROM journal_entries
-      WHERE ?1 IS NULL OR commander_id = ?1
-      GROUP BY event ORDER BY entry_count DESC
+      SELECT journal_file_events.event, SUM(journal_file_events.entry_count) AS entry_count
+      FROM journal_file_events JOIN journal_files ON journal_files.id = journal_file_events.journal_file_id
+      WHERE ?1 IS NULL OR journal_files.commander_id = ?1
+      GROUP BY journal_file_events.event ORDER BY entry_count DESC, journal_file_events.event
     `).all(commanderIdFilter);
 
     response.json({ summary, activeFiles, topEvents });
@@ -98,7 +100,8 @@ export function createJournalRoutes(database) {
       orderByClause: `ORDER BY line_number ${request.query.order === 'asc' ? 'ASC' : 'DESC'}`,
       pagination: getPagination(request.query),
     });
-    pageResult.rows = pageResult.rows.map((entryRow) => ({ ...entryRow, data: JSON.parse(entryRow.data) }));
+    const entryCodec = getEntryCodec(database);
+    pageResult.rows = pageResult.rows.map((entryRow) => ({ ...entryRow, data: JSON.parse(entryCodec.decode(entryRow.data)) }));
     response.json(pageResult);
   });
 

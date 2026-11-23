@@ -28,8 +28,6 @@ import { getCommanderIdFilter } from '../query-helpers.mjs';
  *   is shared by every game client on the machine). They're reset to unknown (counted as up) on
  *   login, death, respawn and at the start of each session, as a "down" isn't always followed by
  *   an "up" event (after a respawn, say).
- * - The credit balance at login is kept so the status monitor can tell which commander a
- *   Status.json write came from.
  */
 const RECENT_SCANNERS_STATE_KEY = 'recentScanners';
 const RECENT_SCANNER_COUNT = 5;
@@ -45,7 +43,7 @@ export default defineStatModule({
   name: 'combat',
   title: 'Combat Session',
   description: 'The current combat session for each commander: kill and scan rates, fuel and fighter state.',
-  version: 6,
+  version: 7,
   events: [
     'LoadGame', 'Loadout', 'Location', 'SupercruiseDestinationDrop', 'SupercruiseEntry', 'FSDJump', 'CarrierJump',
     'Docked', 'Died', 'Music', 'Shutdown', 'Bounty', 'FactionKillBond', 'ReceiveText', 'ReservoirReplenished',
@@ -59,7 +57,6 @@ export default defineStatModule({
   schemaSql: `
     CREATE TABLE IF NOT EXISTS combat_status (
       commander_id        INTEGER PRIMARY KEY REFERENCES commanders(id),
-      ship                TEXT,
       current_system      TEXT,
       session_started_at  TEXT,
       session_ended_at    TEXT,       -- NULL while the session is under way
@@ -75,8 +72,6 @@ export default defineStatModule({
       fighter_changed_at  TEXT,
       shields_up          INTEGER,    -- from ShieldState; NULL when unknown (since login)
       shields_changed_at  TEXT,
-      balance             INTEGER,    -- credits at the last LoadGame
-      balance_at          TEXT,
       hull_health         REAL,       -- 0-1; NULL when unknown
       hull_changed_at     TEXT,
       fighter_hull        REAL,       -- 0-1, the NPC fighter that's out; NULL when none or unknown
@@ -107,7 +102,7 @@ export default defineStatModule({
     const clearEvents = database.prepare('DELETE FROM combat_events WHERE commander_id = ?');
     const insertEvent = database.prepare('INSERT INTO combat_events (commander_id, timestamp, type, faction) VALUES (?, ?, ?, ?)');
     const updateShip = database.prepare(`
-      UPDATE combat_status SET ship = COALESCE(?, ship), fuel_capacity = COALESCE(?, fuel_capacity), has_fighter_bay = COALESCE(?, has_fighter_bay)
+      UPDATE combat_status SET fuel_capacity = COALESCE(?, fuel_capacity), has_fighter_bay = COALESCE(?, has_fighter_bay)
       WHERE commander_id = ?
     `);
     // A ReservoirReplenished reading. The last reading becomes the previous one (for the burn
@@ -132,7 +127,6 @@ export default defineStatModule({
     const updateShields = database.prepare('UPDATE combat_status SET shields_up = ?, shields_changed_at = ? WHERE commander_id = ?');
     const updateHull = database.prepare('UPDATE combat_status SET hull_health = ?, hull_changed_at = ? WHERE commander_id = ?');
     const updateFighterHull = database.prepare('UPDATE combat_status SET fighter_hull = ?, fighter_hull_changed_at = ? WHERE commander_id = ?');
-    const updateBalance = database.prepare('UPDATE combat_status SET balance = ?, balance_at = ? WHERE commander_id = ?');
 
     return ({ commanderId, event, timestamp, data }, moduleState) => {
       ensureStatus.run(commanderId);
@@ -159,16 +153,15 @@ export default defineStatModule({
       switch (event) {
         case 'LoadGame':
           endSession.run(timestamp, commanderId);
-          updateShip.run(data.Ship_Localised ?? data.Ship ?? null, data.FuelCapacity ?? null, null, commanderId);
+          updateShip.run(data.FuelCapacity ?? null, null, commanderId);
           if (Number.isFinite(data.FuelLevel)) setFuelLevel.run(data.FuelLevel, timestamp, commanderId);
-          if (Number.isFinite(data.Credits)) updateBalance.run(data.Credits, timestamp, commanderId);
           updateShields.run(null, timestamp, commanderId);
           return;
 
         case 'Loadout': {
           const modules = Array.isArray(data.Modules) ? data.Modules : [];
           const hasFighterBay = modules.some((module) => /fighterbay/i.test(module.Item ?? ''));
-          updateShip.run(null, data.FuelCapacity?.Main ?? null, hasFighterBay ? 1 : 0, commanderId);
+          updateShip.run(data.FuelCapacity?.Main ?? null, hasFighterBay ? 1 : 0, commanderId);
           if (Number.isFinite(data.HullHealth)) updateHull.run(data.HullHealth, timestamp, commanderId);
           return;
         }
@@ -314,7 +307,6 @@ export default defineStatModule({
         return {
           commanderId: row.commander_id,
           commanderName: row.commander_name,
-          ship: row.ship,
           isJournalActive: Boolean(row.is_journal_active),
           currentSystem: row.current_system,
           session: {

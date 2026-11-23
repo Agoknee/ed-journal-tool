@@ -45,7 +45,7 @@ export default defineStatModule({
   title: 'Carriers',
   description: 'Fleet carrier and squadron carrier details: location, jumps, finances, crew services and trade orders.',
   version: 8,
-  dependsOn: ['markets'],
+  dependsOn: ['markets', 'commanders'],
   events: [
     'CarrierStats', 'CarrierBuy', 'CarrierLocation', 'CarrierJumpRequest', 'CarrierJumpCancelled', 'CarrierJump',
     'CarrierFinance', 'CarrierBankTransfer', 'CarrierCrewServices', 'CarrierDepositFuel', 'CarrierNameChange',

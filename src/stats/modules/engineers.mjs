@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import { defineStatModule } from '../define-stat-module.mjs';
-import { getCommanderIdFilter } from '../query-helpers.mjs';
-import { getEngineerInfo } from '../engineer-data.mjs';
-import { getShipTypeName, tidySlot } from './fleet.mjs';
+import { requireCommanderId } from '../query-helpers.mjs';
+import { getEngineerInfo } from '../../game-data/engineers.mjs';
+import { tidySlot } from '../../game-data/modules.mjs';
+import { tidyBlueprint } from '../../game-data/names.mjs';
+import { getShipTypeName } from '../../game-data/ships.mjs';
 
 /**
  * Each commander's standing with the engineers (EngineerProgress: known, invited, acquainted,
@@ -110,11 +112,8 @@ export default defineStatModule({
 
     // GET /api/stats/engineers?commander=<id>
     router.get('/', (request, response) => {
-      const commanderId = getCommanderIdFilter(request.query);
-      if (commanderId === null) {
-        response.status(400).json({ error: 'Choose a commander' });
-        return;
-      }
+      const commanderId = requireCommanderId(request, response);
+      if (commanderId === null) return;
       const crafts = selectCrafts.all(commanderId);
       // Engineered modules on the ships the commander still owns, by engineer name.
       const modulesByEngineer = new Map();
@@ -159,9 +158,3 @@ export default defineStatModule({
     return router;
   },
 });
-
-function tidyBlueprint(blueprint) {
-  if (!blueprint) return null;
-  const withoutCategory = blueprint.includes('_') ? blueprint.slice(blueprint.indexOf('_') + 1) : blueprint;
-  return withoutCategory.replace(/_/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').trim();
-}

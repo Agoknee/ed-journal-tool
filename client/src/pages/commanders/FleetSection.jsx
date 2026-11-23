@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { fetchJson } from '../../api.js';
 import { copyToClipboard } from '../../clipboard.js';
 import DataTable from '../../components/DataTable.jsx';
 import { Badge, LoadingState, Section, StatCard, StatGrid } from '../../components/ui.jsx';
@@ -8,7 +9,6 @@ import { formatCredits, formatDateTime, formatNumber, formatSystemName } from '.
 /** Ships (with their full loadout), stored modules and vehicles. */
 export default function FleetSection({ commanderId, picker, focusRequest }) {
   const fleetRequest = useApi(commanderId ? '/api/stats/fleet' : null, { commander: commanderId });
-  const assetsRequest = useApi(commanderId ? `/api/stats/assets/${commanderId}` : null);
   const [selectedShipId, setSelectedShipId] = useState(null);
   const [isSoldShown, setIsSoldShown] = useState(false);
 
@@ -32,12 +32,12 @@ export default function FleetSection({ commanderId, picker, focusRequest }) {
       actions={picker}
     >
       <LoadingState requestState={fleetRequest}>
-        {({ ships, vehicles, hangars, ownedCounts }) => {
+        {({ ships, vehicles, hangars, ownedCounts, storedModules: storedModuleList }) => {
           const ownedShips = ships.filter((ship) => !ship.isSold);
           const shownShips = isSoldShown ? ships : ownedShips;
           const selectedShip = ships.find((ship) => ship.shipId === selectedShipId) ?? ownedShips.find((ship) => ship.isCurrent) ?? ownedShips[0];
           const fleetValue = ownedShips.reduce((total, ship) => total + (ship.value ?? 0), 0);
-          const storedModules = assetsRequest.data?.storedModules?.items ?? [];
+          const storedModules = storedModuleList.items;
           return (
             <>
               <StatGrid>
@@ -55,7 +55,7 @@ export default function FleetSection({ commanderId, picker, focusRequest }) {
               </StatGrid>
 
               <div className="section-toolbar">
-                <h3 className="subsection-title">Ships</h3>
+                <h3 className="subheading">Ships</h3>
                 <label className="checkbox">
                   <input type="checkbox" checked={isSoldShown} onChange={(changeEvent) => setIsSoldShown(changeEvent.target.checked)} />
                   Show sold and lost ships
@@ -86,7 +86,7 @@ export default function FleetSection({ commanderId, picker, focusRequest }) {
                   { key: 'rebuy', label: 'Rebuy', align: 'right', render: (ship) => formatCredits(ship.rebuy) },
                   { key: 'maxJumpRange', label: 'Jump', align: 'right', render: (ship) => (ship.maxJumpRange ? `${ship.maxJumpRange.toFixed(1)} ly` : '—') },
                   { key: 'cargoCapacity', label: 'Cargo', align: 'right', render: (ship) => (ship.cargoCapacity === null ? '—' : `${formatNumber(ship.cargoCapacity)} t`) },
-                  { key: 'engineeredCount', label: 'Engineered', align: 'right', render: (ship) => (ship.modules ? formatNumber(ship.engineeredCount) : '—') },
+                  { key: 'engineeredCount', label: 'Engineered', align: 'right', render: (ship) => (ship.hasLoadout ? formatNumber(ship.engineeredCount) : '—') },
                 ]}
               />
               <p className="muted small">Click a ship to see its loadout.</p>
@@ -95,7 +95,7 @@ export default function FleetSection({ commanderId, picker, focusRequest }) {
 
               <div className="two-column">
                 <section>
-                  <h3 className="subsection-title">Vehicle hangars</h3>
+                  <h3 className="subheading">Vehicle hangars</h3>
                   <DataTable
                     tableId="commanders.hangars"
                     rowKey="key"
@@ -108,7 +108,7 @@ export default function FleetSection({ commanderId, picker, focusRequest }) {
                   />
                 </section>
                 <section>
-                  <h3 className="subsection-title">Vehicles used</h3>
+                  <h3 className="subheading">Vehicles used</h3>
                   <DataTable
                     tableId="commanders.vehicles"
                     rowKey="key"
@@ -125,8 +125,8 @@ export default function FleetSection({ commanderId, picker, focusRequest }) {
                 </section>
               </div>
 
-              <h3 className="subsection-title">Stored modules</h3>
-              {assetsRequest.data?.updatedAt?.storedModules && <p className="muted small">As of {formatDateTime(assetsRequest.data.updatedAt.storedModules)} (updated when you visit outfitting)</p>}
+              <h3 className="subheading">Stored modules</h3>
+              {storedModuleList.updatedAt && <p className="muted small">As of {formatDateTime(storedModuleList.updatedAt)} (updated when you visit outfitting)</p>}
               <DataTable
                 tableId="commanders.storedModules"
                 rowKey="key"
@@ -134,8 +134,8 @@ export default function FleetSection({ commanderId, picker, focusRequest }) {
                 pageSize={5}
                 emptyMessage="No stored modules recorded."
                 columns={[
-                  { key: 'name', label: 'Module' },
-                  { key: 'engineering', label: 'Engineering', render: (item) => (item.engineering ? `${tidyBlueprint(item.engineering)} G${item.engineeringLevel}` : '—') },
+                  { key: 'name', label: 'Module', render: (item) => (item.rating ? `${item.rating} ${item.name}` : item.name) },
+                  { key: 'engineering', label: 'Engineering', render: (item) => (item.engineering ? `${item.engineering.blueprintName} G${item.engineering.level}` : '—') },
                   { key: 'starSystem', label: 'Location', render: (item) => (item.inTransit ? 'In transit' : formatSystemName(item.starSystem) ?? '—') },
                   { key: 'value', label: 'Value', align: 'right', render: (item) => formatCredits(item.value) },
                 ]}
@@ -201,15 +201,37 @@ function classifySlot(module) {
 
 function ShipLoadout({ ship, commanderId }) {
   const [selectedSlot, setSelectedSlot] = useState(null);
-  const exportRequest = useApi(ship.loadoutAt ? '/api/stats/fleet/export' : null, { commander: commanderId, ship: ship.shipId });
-  const modules = (ship.modules ?? []).map((module) => ({ ...module, ...classifySlot(module) }));
+  const loadoutRequest = useApi(ship.hasLoadout ? '/api/stats/fleet/ship' : null, { commander: commanderId, ship: ship.shipId });
+  const modules = (loadoutRequest.data?.modules ?? []).map((module) => ({ ...module, ...classifySlot(module) }));
   const groups = LOADOUT_GROUPS.map((group) => ({
     group,
     modules: modules.filter((module) => module.group === group).sort((first, second) => first.order - second.order),
   })).filter((group) => group.modules.length > 0);
   const builtIn = modules.filter((module) => module.group === 'Built-in');
   const selected = modules.find((module) => module.slotKey === selectedSlot) ?? null;
-  const exportData = exportRequest.data;
+
+  // The export (EDSY/Coriolis links and SLEF) is only fetched when a button is used, then reused.
+  const exportRef = useRef(null);
+  const getExport = () => {
+    exportRef.current ??= fetchJson(`/api/stats/fleet/export?commander=${commanderId}&ship=${ship.shipId}`).catch((error) => {
+      exportRef.current = null;
+      throw error;
+    });
+    return exportRef.current;
+  };
+  // A tab is opened straight away (browsers only allow that in the click itself), then sent on.
+  const openExternal = async (urlKey) => {
+    const newTab = window.open('', '_blank');
+    try {
+      const exported = await getExport();
+      if (newTab) {
+        newTab.opener = null;
+        newTab.location.href = exported[urlKey];
+      }
+    } catch {
+      newTab?.close();
+    }
+  };
 
   // The SLEF goes on the clipboard, to paste into Inara or another tool; the button says how it went.
   const [slefCopyStatus, setSlefCopyStatus] = useState(null);
@@ -218,7 +240,14 @@ function ShipLoadout({ ship, commanderId }) {
     const timer = setTimeout(() => setSlefCopyStatus(null), 2000);
     return () => clearTimeout(timer);
   }, [slefCopyStatus]);
-  const copySlef = async () => setSlefCopyStatus((await copyToClipboard(JSON.stringify(exportData.slef, null, 2))) ? 'copied' : 'failed');
+  const copySlef = async () => {
+    try {
+      const exported = await getExport();
+      setSlefCopyStatus((await copyToClipboard(JSON.stringify(exported.slef, null, 2))) ? 'copied' : 'failed');
+    } catch {
+      setSlefCopyStatus('failed');
+    }
+  };
 
   return (
     <div className="card ship-loadout">
@@ -231,15 +260,15 @@ function ShipLoadout({ ship, commanderId }) {
         </div>
         {ship.loadoutAt && (
           <div className="ship-loadout-actions">
-            <button type="button" disabled={!exportData} onClick={() => window.open(exportData.edsyUrl, '_blank', 'noopener')} title="Open this loadout in EDSY for full stats">Open in EDSY</button>
-            <button type="button" disabled={!exportData} onClick={() => window.open(exportData.coriolisUrl, '_blank', 'noopener')} title="Open this loadout in Coriolis for full stats">Open in Coriolis</button>
-            <button type="button" disabled={!exportData} onClick={copySlef} title="Copy the loadout to the clipboard in the Ship Loadout Exchange Format (for Inara and other tools)">
+            <button type="button" onClick={() => openExternal('edsyUrl')} title="Open this loadout in EDSY for full stats">Open in EDSY</button>
+            <button type="button" onClick={() => openExternal('coriolisUrl')} title="Open this loadout in Coriolis for full stats">Open in Coriolis</button>
+            <button type="button" onClick={copySlef} title="Copy the loadout to the clipboard in the Ship Loadout Exchange Format (for Inara and other tools)">
               {slefCopyStatus === 'copied' ? 'SLEF copied' : slefCopyStatus === 'failed' ? 'Copy failed' : 'Export SLEF'}
             </button>
           </div>
         )}
       </header>
-      {ship.modules && (
+      {ship.hasLoadout && loadoutRequest.data && (
         <>
           <StatGrid>
             <StatCard label="Hull + modules" value={formatCredits((ship.hullValue ?? 0) + (ship.modulesValue ?? 0))} detail={`Hull ${formatCredits(ship.hullValue)}`} />
@@ -355,7 +384,7 @@ function ModifierRow({ modifier }) {
   const isBetter = change !== null && (modifier.lessIsGood ? change < 0 : change > 0);
   return (
     <tr>
-      <td>{tidyLabel(modifier.label)}</td>
+      <td>{modifier.name}</td>
       <td className="numeric">{isNumeric ? formatStat(originalValue) : '—'}</td>
       <td className="numeric">{isNumeric ? formatStat(value) : String(value)}</td>
       <td className={`numeric ${change ? (isBetter ? 'modifier-better' : 'modifier-worse') : ''}`}>
@@ -369,14 +398,4 @@ function formatStat(value) {
   return Math.abs(value) >= 100 ? formatNumber(Math.round(value)) : Number(value.toFixed(3)).toString();
 }
 
-/** "MaxFuelPerJump" -> "Max fuel per jump"; acronyms stay ("FSDOptimalMass" -> "FSD optimal mass"). */
-function tidyLabel(label) {
-  const words = String(label).replace(/_/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').split(/\s+/);
-  const sentence = words.map((word, index) => (/^[A-Z]{2,}$/.test(word) ? word : index === 0 ? word : word.toLowerCase())).join(' ');
-  return sentence.charAt(0).toUpperCase() + sentence.slice(1);
-}
 
-function tidyBlueprint(blueprint) {
-  const withoutCategory = blueprint.includes('_') ? blueprint.slice(blueprint.indexOf('_') + 1) : blueprint;
-  return withoutCategory.replace(/_/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2');
-}

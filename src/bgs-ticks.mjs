@@ -1,4 +1,5 @@
 import { logger } from './logger.mjs';
+import { toJournalTimestamp } from './journals/journal-timestamp.mjs';
 
 /**
  * The BGS "tick" is when the game applies everyone's background simulation activity, roughly once a
@@ -11,10 +12,6 @@ const CHECK_INTERVAL_MS = 5 * 60 * 1000;
 const REQUEST_TIMEOUT_MS = 10_000;
 
 /** "2026-11-20T16:52:46.000Z" -> "2026-11-20T16:52:46Z", the journals' timestamp format. */
-function toJournalTimestamp(isoTimestamp) {
-  return new Date(isoTimestamp).toISOString().replace(/\.\d{3}Z$/, 'Z');
-}
-
 export class TickMonitor {
   /** @param {{ database: import('node:sqlite').DatabaseSync, eventHub: import('./events/event-hub.mjs').EventHub }} options */
   constructor({ database, eventHub }) {

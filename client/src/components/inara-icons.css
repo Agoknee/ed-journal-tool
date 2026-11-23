@@ -1,0 +1,3 @@
+/* Inara's icon font: material grade glyphs and Odyssey component type icons. */
+@font-face { font-family: "inara-icons"; src: url("/inara/fonts/fontello.woff2") format("woff2"); font-display: block; unicode-range: U+E800-F235; }
+.inara-glyph { font-family: "inara-icons"; font-style: normal; font-weight: normal; line-height: 1; display: inline-block; speak: never; }

@@ -3,6 +3,7 @@ import { ColumnChart, LineChart } from '../../components/charts.jsx';
 import DataTable from '../../components/DataTable.jsx';
 import { LoadingState, Section, StatCard, StatGrid, Tabs } from '../../components/ui.jsx';
 import { useApi } from '../../hooks/use-api.js';
+import { STORED_BOOLEAN, useStoredState } from '../../hooks/use-stored-state.js';
 import { formatCredits, formatDateTime, formatFullCredits, formatNumber } from '../../format.js';
 
 const CATEGORY_PERIODS = [
@@ -46,30 +47,22 @@ const LIFETIME_SPENDING = [
   ['Crime', 'Total_Fines', 'Fines'],
 ];
 
-/** Balance over time, income and spending by month and category, the biggest transactions and lifetime totals. */
 const EXCLUDE_CARRIER_STORAGE_KEY = 'credits.excludeCarrierTrades';
 
+/** Balance over time, income and spending by month and category, the biggest transactions and lifetime totals. */
 export default function CreditsSection({ commanderId, picker, focusRequest }) {
   const [periodId, setPeriodId] = useState('all');
-  const [isCarrierExcluded, setIsCarrierExcluded] = useState(readExcludeCarrier);
-  const changeCarrierExcluded = (isExcluded) => {
-    setIsCarrierExcluded(isExcluded);
-    try {
-      localStorage.setItem(EXCLUDE_CARRIER_STORAGE_KEY, String(isExcluded));
-    } catch {
-      // Storage may be unavailable; the choice still applies for this visit.
-    }
-  };
+  const [isCarrierExcluded, setIsCarrierExcluded] = useStoredState(EXCLUDE_CARRIER_STORAGE_KEY, false, STORED_BOOLEAN);
   const [todayMs] = useState(() => Date.now());
   const period = CATEGORY_PERIODS.find((candidate) => candidate.id === periodId);
   const since = period.days ? new Date(todayMs - period.days * 86_400_000).toISOString().slice(0, 10) : '';
   const creditsRequest = useApi(commanderId ? '/api/stats/credits' : null, { commander: commanderId, since, excludeCarrier: isCarrierExcluded });
   // Every commander's latest balance and their fleet carriers' balances, for the carrier and combined cards.
-  const assetsRequest = useApi('/api/stats/assets', { commander: 'all' });
+  const commandersRequest = useApi('/api/stats/commanders', { commander: 'all' });
   const carriersRequest = useApi('/api/stats/carriers', { commander: 'all' });
   const carrierBalances = getCarrierBalances(carriersRequest.data);
   const commanderCarrierBalance = carrierBalances.byCommander.get(commanderId) ?? null;
-  const combinedCredits = assetsRequest.data?.combined.credits ?? null;
+  const combinedCredits = commandersRequest.data?.combined.credits ?? null;
 
   // Asked to show a commander's credits (from their card): scroll here once their credits have loaded.
   const handledFocusRef = useRef(null);
@@ -89,7 +82,7 @@ export default function CreditsSection({ commanderId, picker, focusRequest }) {
       actions={(
         <>
           <label className="checkbox" title="Leave out commodity buys and sells at fleet carrier markets (the balance chart is unaffected)">
-            <input type="checkbox" checked={isCarrierExcluded} onChange={(changeEvent) => changeCarrierExcluded(changeEvent.target.checked)} />
+            <input type="checkbox" checked={isCarrierExcluded} onChange={(changeEvent) => setIsCarrierExcluded(changeEvent.target.checked)} />
             Exclude carrier trades
           </label>
           {picker}
@@ -127,7 +120,7 @@ export default function CreditsSection({ commanderId, picker, focusRequest }) {
               </StatGrid>
 
               <div className="chart-card">
-                <h3 className="subsection-title">Balance</h3>
+                <h3 className="subheading">Balance</h3>
                 <p className="muted small">Credits at each login (one reading per day).</p>
                 <LineChart
                   label="Credit balance over time"
@@ -138,7 +131,7 @@ export default function CreditsSection({ commanderId, picker, focusRequest }) {
               </div>
 
               <div className="chart-card">
-                <h3 className="subsection-title">Income and spending by month</h3>
+                <h3 className="subheading">Income and spending by month</h3>
                 <p className="muted small">The last {recentMonths.length} months. Carrier bank transfers aren’t counted, as they only move credits{isCarrierExcluded ? '; nor are trades at fleet carrier markets' : ''}.</p>
                 <ColumnChart
                   label="Income and spending by month"
@@ -154,7 +147,7 @@ export default function CreditsSection({ commanderId, picker, focusRequest }) {
               </div>
 
               <div className="section-toolbar">
-                <h3 className="subsection-title">By category</h3>
+                <h3 className="subheading">By category</h3>
                 <Tabs tabs={CATEGORY_PERIODS} activeTab={periodId} onChange={setPeriodId} />
               </div>
               <div className="two-column">
@@ -162,7 +155,7 @@ export default function CreditsSection({ commanderId, picker, focusRequest }) {
                 <CategoryTable tableId="commanders.creditSpending" title="Spending" categories={spending} total={totalSpending} className="chart-series-spending" />
               </div>
 
-              <h3 className="subsection-title">Largest transactions</h3>
+              <h3 className="subheading">Largest transactions</h3>
               <DataTable
                 tableId="commanders.largestTransactions"
                 rowKey="key"
@@ -178,7 +171,7 @@ export default function CreditsSection({ commanderId, picker, focusRequest }) {
 
               {statistics && (
                 <>
-                  <h3 className="subsection-title">Lifetime totals</h3>
+                  <h3 className="subheading">Lifetime totals</h3>
                   <p className="muted small">From the game’s own statistics as of {formatDateTime(statistics.updatedAt)}, covering the commander’s whole career.</p>
                   <div className="two-column">
                     <LifetimeTable tableId="commanders.lifetimeEarnings" title="Earned" rows={LIFETIME_EARNINGS} statistics={statistics} />
@@ -249,14 +242,6 @@ function LifetimeTable({ tableId, title, rows, statistics }) {
 function formatMonth(month, isShort) {
   const [year, monthNumber] = month.split('-').map(Number);
   return new Date(Date.UTC(year, monthNumber - 1, 1)).toLocaleDateString(undefined, isShort ? { month: 'short', year: '2-digit', timeZone: 'UTC' } : { month: 'long', year: 'numeric', timeZone: 'UTC' });
-}
-
-function readExcludeCarrier() {
-  try {
-    return localStorage.getItem(EXCLUDE_CARRIER_STORAGE_KEY) === 'true';
-  } catch {
-    return false;
-  }
 }
 
 /**

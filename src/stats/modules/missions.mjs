@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { defineStatModule } from '../define-stat-module.mjs';
+import { getDockedLocation, trackDockingState } from '../docking-state.mjs';
 import { getCommodityDisplayName } from '../commodity-names.mjs';
-import { SqlFilter, addStandardFilters, getCommanderIdFilter, getOrderByClause, getPagination, runPaginatedQuery } from '../query-helpers.mjs';
+import { SqlFilter, addStandardFilters, getCommanderIdFilter, getOrderByClause, getPagination, runPaginatedQuery, sumBy } from '../query-helpers.mjs';
 
 /**
  * Every mission a commander has taken, from MissionAccepted to its outcome, with extra tracking for
@@ -22,7 +23,6 @@ import { SqlFilter, addStandardFilters, getCommanderIdFilter, getOrderByClause, 
  */
 const LOCATION_EVENTS = ['Location', 'FSDJump', 'CarrierJump'];
 const SYSTEM_STATE_KEY = 'system';
-const DOCKED_STATE_KEY = 'docked';
 const ODYSSEY_STATE_KEY = 'odyssey';
 const ON_FOOT_STATE_KEY = 'onFoot';
 // Kills of ships or people that belong to no minor faction can't count toward a massacre.
@@ -180,6 +180,7 @@ export default defineStatModule({
     `);
 
     return ({ id: entryId, commanderId, event, timestamp, data }, moduleState) => {
+      trackDockingState(event, data, moduleState);
       switch (event) {
         case 'LoadGame':
           moduleState.set(ODYSSEY_STATE_KEY, Boolean(data.Odyssey));
@@ -192,23 +193,11 @@ export default defineStatModule({
           moduleState.set(SYSTEM_STATE_KEY, { name: data.StarSystem ?? null, address: data.SystemAddress ?? null });
           upsertLocation.run(commanderId, data.StarSystem ?? null, data.SystemAddress ?? null,
             JSON.stringify((data.Factions ?? []).map((faction) => faction.Name).filter(Boolean)), timestamp);
-          if (event === 'Location') {
-            moduleState.set(ON_FOOT_STATE_KEY, Boolean(data.OnFoot));
-            moduleState.set(DOCKED_STATE_KEY, data.Docked ? toDocked(data) : null);
-          } else if (event === 'FSDJump') {
-            moduleState.set(DOCKED_STATE_KEY, null);
-          } else if (data.Docked) {
-            moduleState.set(DOCKED_STATE_KEY, toDocked(data));
-          }
+          if (event === 'Location') moduleState.set(ON_FOOT_STATE_KEY, Boolean(data.OnFoot));
           return;
 
         case 'Docked':
           moduleState.set(SYSTEM_STATE_KEY, { name: data.StarSystem ?? null, address: data.SystemAddress ?? null });
-          moduleState.set(DOCKED_STATE_KEY, toDocked(data));
-          return;
-
-        case 'Undocked':
-          moduleState.set(DOCKED_STATE_KEY, null);
           return;
 
         case 'Embark':
@@ -219,7 +208,7 @@ export default defineStatModule({
         case 'MissionAccepted': {
           if (!data.MissionID || !data.Name) return;
           const system = moduleState.get(SYSTEM_STATE_KEY);
-          const docked = moduleState.get(DOCKED_STATE_KEY);
+          const docked = getDockedLocation(moduleState);
           const category = getCategory(data.Name);
           const commodity = data.Commodity ? getCommodityKey(data.Commodity) : null;
           insertMission.run(
@@ -643,10 +632,3 @@ function isSameGameMode(missionOdyssey, currentOdyssey) {
   return Boolean(missionOdyssey) === Boolean(currentOdyssey);
 }
 
-function toDocked(data) {
-  return { stationName: data.StationName_Localised ?? data.StationName ?? null, marketId: data.MarketID ?? null };
-}
-
-function sumBy(rows, key) {
-  return rows.reduce((total, row) => total + (Number(row[key]) || 0), 0);
-}

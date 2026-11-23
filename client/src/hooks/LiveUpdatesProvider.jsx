@@ -8,6 +8,8 @@ const UPDATE_TOPICS = ['journals', 'stats', 'scan', 'clock', 'notes', 'ticks', '
 /**
  * Subscribes to the server's event stream (/api/events) and exposes a version counter per topic.
  * Data hooks include these counters in their dependencies, so they refetch when data changes.
+ * A "stats" update also bumps "stats:<module>" for each module it names (the modules that changed
+ * and those that read from them), so stats requests can refetch only for their own module.
  */
 export function LiveUpdatesProvider({ children }) {
   const [versions, setVersions] = useState({});
@@ -37,6 +39,9 @@ export function LiveUpdatesProvider({ children }) {
       if (update.topic === 'scan') setScanProgress(update.payload);
 
       pendingTopicsRef.current.add(update.topic);
+      if (update.topic === 'stats') {
+        for (const moduleName of update.payload?.modules ?? []) pendingTopicsRef.current.add(`stats:${moduleName}`);
+      }
       throttleTimerRef.current ??= setTimeout(flushPendingTopics, REFRESH_THROTTLE_MS);
     };
 

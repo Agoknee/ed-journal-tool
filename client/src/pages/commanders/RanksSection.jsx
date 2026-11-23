@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import DataTable from '../../components/DataTable.jsx';
 import RankIcon from '../../components/RankIcon.jsx';
 import { getPowerImageUrl, getRankImageUrl, getSuperpowerImageUrl } from '../../components/inara-images.js';
 import { Badge, LoadingState, Section, StatCard, StatGrid } from '../../components/ui.jsx';
-import { useApi } from '../../hooks/use-api.js';
+import { useApi, useDebouncedValue } from '../../hooks/use-api.js';
+import { useTableState } from '../../hooks/use-list-filters.js';
+import { useElementSize } from '../../hooks/use-element-size.js';
 import { formatDateTime, formatNumber, formatSystemName } from '../../format.js';
 
 const PILOT_RANKS = [
@@ -56,7 +58,7 @@ export default function RanksSection({ commanderId, picker }) {
               ))}
             </div>
 
-            <h3 className="subsection-title">Superpower reputation</h3>
+            <h3 className="subheading">Superpower reputation</h3>
             <div className="reputation-grid">
               {MAJOR_FACTIONS.map((faction) => (
                 <ReputationCard key={faction.key} faction={faction} reputation={profile.reputation?.[faction.key]} />
@@ -67,11 +69,11 @@ export default function RanksSection({ commanderId, picker }) {
       </LoadingState>
 
       <LoadingState requestState={reputationRequest}>
-        {({ powerplay, factions }) => (
+        {({ powerplay, factionCounts }) => (
           <>
-            <h3 className="subsection-title">Powerplay</h3>
+            <h3 className="subheading">Powerplay</h3>
             <PowerplayPanel powerplay={powerplay[0]} />
-            <MinorFactions factions={factions ?? []} />
+            <MinorFactions commanderId={commanderId} counts={factionCounts ?? {}} />
           </>
         )}
       </LoadingState>
@@ -126,16 +128,8 @@ function ReputationCard({ faction, reputation }) {
 
 function PowerplayPanel({ powerplay }) {
   const [weekAgo] = useState(() => new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10));
-  // The portrait is square and as tall as the first row of cards, which depends on their content.
-  const cardsRef = useRef(null);
-  const [portraitSize, setPortraitSize] = useState(null);
-  useEffect(() => {
-    const firstCard = cardsRef.current?.querySelector('.stat-card');
-    if (!firstCard) return undefined;
-    const observer = new ResizeObserver(() => setPortraitSize(Math.round(firstCard.getBoundingClientRect().height)));
-    observer.observe(firstCard);
-    return () => observer.disconnect();
-  }, [powerplay?.power]);
+  // The portrait is square and as tall as the row of cards, which depends on their content.
+  const [cardsRef, { height: cardsHeight }] = useElementSize();
   if (!powerplay?.power) return <div className="notice">Not pledged to a power.</div>;
   const meritsThisWeek = powerplay.dailyMerits.filter((day) => day.day >= weekAgo).reduce((total, day) => total + day.merits, 0);
   const pledgedDays = powerplay.timePledgedSeconds ? Math.floor(powerplay.timePledgedSeconds / 86_400) : null;
@@ -144,7 +138,7 @@ function PowerplayPanel({ powerplay }) {
       <div className="powerplay-power">{powerplay.power}</div>
       {/* The portrait sits beside the cards, as tall as they are. */}
       <div className="powerplay-row">
-        <RankIcon className="powerplay-portrait" size={portraitSize ?? 96} title={powerplay.power} imageUrl={getPowerImageUrl(powerplay.power)} />
+        <RankIcon className="powerplay-portrait" size={cardsHeight || 96} title={powerplay.power} imageUrl={getPowerImageUrl(powerplay.power)} />
         <div className="powerplay-cards" ref={cardsRef}>
           <StatGrid>
             <StatCard label="Rank" value={formatNumber(powerplay.rank)} tone="accent" />
@@ -158,42 +152,41 @@ function PowerplayPanel({ powerplay }) {
   );
 }
 
-function MinorFactions({ factions }) {
+const STANDING_TONES = { Allied: 'live', Friendly: 'info', Cordial: 'neutral', Neutral: 'neutral', Unfriendly: 'warning', Hostile: 'danger' };
+const STANDING_ORDER = ['Allied', 'Friendly', 'Cordial', 'Neutral', 'Unfriendly', 'Hostile'];
+
+/** Reputation with each minor faction, searched, sorted and paged on the server (there can be thousands). */
+function MinorFactions({ commanderId, counts }) {
   const [search, setSearch] = useState('');
-  const normalizedSearch = search.trim().toLowerCase();
-  const rows = factions
-    .filter((faction) => !normalizedSearch || [faction.faction, faction.starSystem, faction.allegiance].some((value) => value?.toLowerCase().includes(normalizedSearch)))
-    .map((faction) => ({ ...faction, standing: getStanding(faction.reputation) }));
-  const counts = factions.reduce((totals, faction) => {
-    const { label } = getStanding(faction.reputation);
-    totals[label] = (totals[label] ?? 0) + 1;
-    return totals;
-  }, {});
+  const debouncedSearch = useDebouncedValue(search.trim());
+  const tableState = useTableState({ tableId: 'commanders.minorFactions', defaultSort: 'reputation', pageSize: 5, resetKey: `${commanderId}:${debouncedSearch}` });
+  const factionsRequest = useApi('/api/stats/reputation/factions', { commander: commanderId, search: debouncedSearch, ...tableState.queryParams });
   return (
     <>
       <div className="section-toolbar">
-        <h3 className="subsection-title">Minor factions</h3>
+        <h3 className="subheading">Minor factions</h3>
         <input type="search" className="toolbar-search" placeholder="Search faction or system…" value={search} onChange={(changeEvent) => setSearch(changeEvent.target.value)} />
       </div>
       <p className="muted small">
-        {['Allied', 'Friendly', 'Cordial', 'Neutral', 'Unfriendly', 'Hostile'].filter((label) => counts[label]).map((label) => `${formatNumber(counts[label])} ${label.toLowerCase()}`).join(' · ') || 'None yet'}.
+        {STANDING_ORDER.filter((label) => counts[label]).map((label) => `${formatNumber(counts[label])} ${label.toLowerCase()}`).join(' · ') || 'None yet'}.
         {' '}Reputation is logged for the factions in each system you visit, as of your last visit.
       </p>
       <DataTable
         tableId="commanders.minorFactions"
         rowKey="faction"
-        rows={rows}
-        pageSize={5}
-        pageResetKey={normalizedSearch}
-        emptyMessage="No minor factions recorded."
+        isLoading={factionsRequest.isLoading}
+        rows={factionsRequest.data?.rows ?? []}
+        sorting={tableState.sorting}
+        pagination={factionsRequest.data && { ...factionsRequest.data, onOffsetChange: tableState.onOffsetChange }}
+        emptyMessage={debouncedSearch ? 'No matching factions.' : 'No minor factions recorded.'}
         columns={[
-          { key: 'faction', label: 'Faction', wrap: true },
-          { key: 'reputation', label: 'Standing', render: (faction) => <Badge tone={faction.standing.tone}>{faction.standing.label}</Badge> },
-          { key: 'reputationValue', label: 'Reputation', align: 'right', sortValue: (faction) => faction.reputation, render: (faction) => `${faction.reputation.toFixed(1)}%` },
-          { key: 'allegiance', label: 'Allegiance', render: (faction) => faction.allegiance ?? '—' },
-          { key: 'government', label: 'Government', render: (faction) => faction.government ?? '—' },
-          { key: 'starSystem', label: 'Seen in', render: (faction) => formatSystemName(faction.starSystem) ?? '—' },
-          { key: 'updatedAt', label: 'As of', render: (faction) => formatDateTime(faction.updatedAt) },
+          { key: 'faction', label: 'Faction', wrap: true, sortKey: 'faction' },
+          { key: 'standing', label: 'Standing', render: (faction) => <Badge tone={STANDING_TONES[faction.standing] ?? 'neutral'}>{faction.standing}</Badge> },
+          { key: 'reputation', label: 'Reputation', align: 'right', sortKey: 'reputation', render: (faction) => `${faction.reputation.toFixed(1)}%` },
+          { key: 'allegiance', label: 'Allegiance', sortKey: 'allegiance', render: (faction) => faction.allegiance ?? '—' },
+          { key: 'government', label: 'Government', sortKey: 'government', render: (faction) => faction.government ?? '—' },
+          { key: 'starSystem', label: 'Seen in', sortKey: 'starSystem', render: (faction) => formatSystemName(faction.starSystem) ?? '—' },
+          { key: 'updatedAt', label: 'As of', sortKey: 'updatedAt', render: (faction) => formatDateTime(faction.updatedAt) },
         ]}
       />
     </>

@@ -27,7 +27,7 @@ const ON_FOOT_CATEGORIES = [
 /** Materials, on-foot items (ship locker and backpack), cargo, and suits and weapons. */
 export default function InventorySection({ commanderId, picker }) {
   const [activeTab, setActiveTab] = useState('materials');
-  const assetsRequest = useApi(commanderId ? `/api/stats/assets/${commanderId}` : null);
+  const assetsRequest = useApi(commanderId ? '/api/stats/inventory' : null, { commander: commanderId });
   const fleetRequest = useApi(commanderId ? '/api/stats/fleet' : null, { commander: commanderId });
 
   return (
@@ -43,13 +43,14 @@ export default function InventorySection({ commanderId, picker }) {
           const materialCount = MATERIAL_CATEGORIES.reduce((total, category) => total + countItems(assets.materials?.[category.key]), 0);
           const lockerCount = ON_FOOT_CATEGORIES.reduce((total, category) => total + countItems(assets.shipLocker?.[category.key]), 0);
           const ownedSuits = fleetRequest.data?.suits.filter((suit) => !suit.isSold) ?? [];
+          const currentCargoCapacity = fleetRequest.data?.ships.find((ship) => ship.isCurrent)?.cargoCapacity ?? null;
           const ownedWeapons = fleetRequest.data?.weapons.filter((weapon) => !weapon.isSold) ?? [];
           return (
             <>
               <StatGrid>
                 <StatCard label="Materials" value={formatNumber(materialCount)} detail={`${formatNumber(MATERIAL_CATEGORIES.reduce((total, category) => total + (assets.materials?.[category.key]?.length ?? 0), 0))} kinds`} />
                 <StatCard label="Ship locker" value={formatNumber(lockerCount)} detail="on-foot items" />
-                <StatCard label="Cargo" value={`${formatNumber(assets.cargo?.count ?? 0)} t`} detail={assets.currentShip?.cargoCapacity ? `of ${formatNumber(assets.currentShip.cargoCapacity)} t` : null} />
+                <StatCard label="Cargo" value={`${formatNumber(assets.cargo?.count ?? 0)} t`} detail={currentCargoCapacity ? `of ${formatNumber(currentCargoCapacity)} t` : null} />
                 <StatCard label="Suits" value={formatNumber(ownedSuits.length)} />
                 <StatCard label="Weapons" value={formatNumber(ownedWeapons.length)} />
               </StatGrid>
@@ -83,7 +84,7 @@ function MaterialsTab({ materials, updatedAt }) {
   const isSearching = normalizedSearch !== '';
   const shownCategories = isSearching ? MATERIAL_CATEGORIES : MATERIAL_CATEGORIES.filter((category) => category.key === categoryKey);
   const items = shownCategories
-    .flatMap((category) => (materials[category.key] ?? []).map((material) => ({ ...material, name: tidyName(material.name), categoryLabel: category.label })))
+    .flatMap((category) => (materials[category.key] ?? []).map((material) => ({ ...material, categoryLabel: category.label })))
     .filter((material) => !isSearching || material.name.toLowerCase().includes(normalizedSearch) || material.family?.toLowerCase().includes(normalizedSearch));
   // Families in a fixed order (graded families first), each listed grade 1 to 5. Guardian and
   // Thargoid families exist in two categories, so groups are per category and family.
@@ -160,7 +161,7 @@ function OnFootTab({ tableId, inventory, updatedAt, pageSize = 25, isSearchable 
   if (!inventory) return <div className="notice">Nothing recorded yet.</div>;
   const normalizedSearch = search.trim().toLowerCase();
   const allRows = ON_FOOT_CATEGORIES.flatMap((category) => (inventory[category.key] ?? [])
-    .map((item, index) => ({ ...item, name: tidyName(item.name), category: category.label, rowKey: `${category.key}-${index}` })));
+    .map((item, index) => ({ ...item, category: category.label, rowKey: `${category.key}-${index}` })));
   const rows = normalizedSearch
     ? allRows.filter((item) => item.name.toLowerCase().includes(normalizedSearch) || item.category.toLowerCase().includes(normalizedSearch))
     : allRows;
@@ -205,7 +206,7 @@ function CargoTab({ cargo, updatedAt }) {
       <DataTable
         tableId="commanders.cargo"
         rowKey="rowKey"
-        rows={(cargo?.inventory ?? []).map((item, index) => ({ ...item, name: tidyName(item.name), rowKey: index }))}
+        rows={(cargo?.inventory ?? []).map((item, index) => ({ ...item, rowKey: index }))}
         emptyMessage="The hold is empty."
         columns={[
           { key: 'name', label: 'Commodity' },
@@ -233,7 +234,7 @@ function SuitsTab({ fleetRequest }) {
                 these are the ones bought, sold or used in a loadout since your journals began.
               </p>
             )}
-            <h3 className="subsection-title">Loadouts</h3>
+            <h3 className="subheading">Loadouts</h3>
             <DataTable
               tableId="commanders.suitLoadouts"
               rowKey="loadoutId"
@@ -253,7 +254,7 @@ function SuitsTab({ fleetRequest }) {
             />
             <div className="two-column">
               <section>
-                <h3 className="subsection-title">Suits</h3>
+                <h3 className="subheading">Suits</h3>
                 <DataTable
                   tableId="commanders.suits"
                   rowKey="suitId"
@@ -268,7 +269,7 @@ function SuitsTab({ fleetRequest }) {
                 />
               </section>
               <section>
-                <h3 className="subsection-title">Weapons</h3>
+                <h3 className="subheading">Weapons</h3>
                 <DataTable
                   tableId="commanders.weapons"
                   rowKey="weaponId"
@@ -290,8 +291,3 @@ function SuitsTab({ fleetRequest }) {
   );
 }
 
-/** Internal names like "ruthenium" or "chemicalprocessors" read better capitalised. */
-function tidyName(name) {
-  if (!name) return '—';
-  return /[A-Z ]/.test(name) ? name : name.charAt(0).toUpperCase() + name.slice(1);
-}

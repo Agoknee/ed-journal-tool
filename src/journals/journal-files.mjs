@@ -8,6 +8,15 @@
 const currentFormatPattern = /^Journal\.(\d{4}-\d{2}-\d{2})T(\d{6})\.(\d+)\.log$/i;
 const legacyFormatPattern = /^Journal\.(\d{2})(\d{2})(\d{2})(\d{6})\.(\d+)\.log$/i;
 
+/**
+ * Whether a journal was written by the Legacy game client (Horizons 3.8, with its own galaxy and
+ * commander saves) rather than the live game, from its Fileheader game version (3.x or older).
+ * @param {string | null} gameVersion
+ */
+export function isLegacyGameVersion(gameVersion) {
+  return /^[0-3]\./.test(gameVersion ?? '');
+}
+
 export function isJournalFileName(fileName) {
   return currentFormatPattern.test(fileName) || legacyFormatPattern.test(fileName);
 }

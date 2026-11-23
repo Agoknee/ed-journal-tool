@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
+import { useElementSize } from '../hooks/use-element-size.js';
+import './charts.css';
 
 /**
  * Small hand-drawn SVG charts. Marks follow one spec: 2px lines with a faint area wash, columns at
@@ -8,19 +10,6 @@ import { useEffect, useRef, useState } from 'react';
 const MARGIN = { top: 12, right: 16, bottom: 26, left: 64 };
 const MAX_COLUMN_WIDTH = 24;
 const COLUMN_GAP = 2;
-
-/** The rendered width of an element, kept up to date as it resizes. */
-function useElementWidth() {
-  const ref = useRef(null);
-  const [width, setWidth] = useState(0);
-  useEffect(() => {
-    if (!ref.current) return undefined;
-    const observer = new ResizeObserver(([entry]) => setWidth(Math.floor(entry.contentRect.width)));
-    observer.observe(ref.current);
-    return () => observer.disconnect();
-  }, []);
-  return [ref, width];
-}
 
 /** About `count` round tick values covering 0..max (or min..max). */
 function niceTicks(min, max, count = 4) {
@@ -49,7 +38,7 @@ function ChartTooltip({ x, y, width, children }) {
  * @param {{ points: { time: number, value: number }[], formatValue: (value: number) => string, formatTime: (time: number) => string, height?: number, label: string }} props
  */
 export function LineChart({ points, formatValue, formatTime, height = 220, label }) {
-  const [containerRef, width] = useElementWidth();
+  const [containerRef, { width }] = useElementSize();
   const [hoverIndex, setHoverIndex] = useState(null);
   if (points.length === 0) return <div className="notice">No data yet.</div>;
 
@@ -137,7 +126,7 @@ function niceTimeTicks(minTime, maxTime, count) {
  * @param {{ groups: { key: string, label: string, values: Record<string, number> }[], series: { key: string, label: string, className: string }[], formatValue: (value: number, isFull?: boolean) => string, height?: number, label: string }} props
  */
 export function ColumnChart({ groups, series, formatValue, height = 240, label }) {
-  const [containerRef, width] = useElementWidth();
+  const [containerRef, { width }] = useElementSize();
   const [hoverIndex, setHoverIndex] = useState(null);
   if (groups.length === 0) return <div className="notice">No data yet.</div>;
 

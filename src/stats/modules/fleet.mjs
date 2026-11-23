@@ -3,7 +3,11 @@ import { Router } from 'express';
 import { appVersion } from '../../cli.mjs';
 import { defineStatModule } from '../define-stat-module.mjs';
 import { DOCKING_EVENTS, getDockedLocation, trackDockingState } from '../docking-state.mjs';
-import { getCommanderIdFilter } from '../query-helpers.mjs';
+import { createModuleDescriber, isCosmeticSlot, tidySlot } from '../../game-data/modules.mjs';
+import { cleanLocalised, getItemClass, normalizeItem, tidyBlueprint, tidyName } from '../../game-data/names.mjs';
+import { getModificationName, getSuitName } from '../../game-data/on-foot.mjs';
+import { getShipTypeName, VEHICLE_NAMES } from '../../game-data/ships.mjs';
+import { getCommanderIdFilter, requireCommanderId } from '../query-helpers.mjs';
 
 /**
  * Each commander's ships, on-foot suits and weapons, suit loadouts and the SRVs and fighters
@@ -19,44 +23,14 @@ import { getCommanderIdFilter } from '../query-helpers.mjs';
  * - Module and ship names come from the localised names the game logs (when modules are bought,
  *   stored and so on), falling back to the internal names tidied up.
  * - Each ship's last Loadout event is also kept as logged, for exporting to EDSY, Coriolis and SLEF.
+ * - A ship's value is from whichever is newer: its loadout (hull + modules) or the shipyard listing.
+ * - Stored modules are the latest StoredModules listing (logged at outfitting).
  */
-const SHIP_NAMES = {
-  sidewinder: 'Sidewinder', eagle: 'Eagle', hauler: 'Hauler', adder: 'Adder', empire_eagle: 'Imperial Eagle',
-  viper: 'Viper Mk III', cobramkiii: 'Cobra Mk III', viper_mkiv: 'Viper Mk IV', diamondback: 'Diamondback Scout',
-  cobramkiv: 'Cobra Mk IV', cobramkv: 'Cobra Mk V', type6: 'Type-6 Transporter', dolphin: 'Dolphin',
-  diamondbackxl: 'Diamondback Explorer', empire_courier: 'Imperial Courier', independant_trader: 'Keelback',
-  asp_scout: 'Asp Scout', vulture: 'Vulture', asp: 'Asp Explorer', federation_dropship: 'Federal Dropship',
-  type7: 'Type-7 Transporter', typex: 'Alliance Chieftain', federation_dropship_mkii: 'Federal Assault Ship',
-  empire_trader: 'Imperial Clipper', typex_2: 'Alliance Crusader', typex_3: 'Alliance Challenger',
-  federation_gunship: 'Federal Gunship', krait_light: 'Krait Phantom', krait_mkii: 'Krait Mk II', orca: 'Orca',
-  ferdelance: 'Fer-de-Lance', mamba: 'Mamba', python: 'Python', python_nx: 'Python Mk II', type8: 'Type-8 Transporter',
-  type9: 'Type-9 Heavy', belugaliner: 'Beluga Liner', type9_military: 'Type-10 Defender', anaconda: 'Anaconda',
-  federation_corvette: 'Federal Corvette', cutter: 'Imperial Cutter', mandalay: 'Mandalay', panthermkii: 'Panther Clipper Mk II',
-  corsair: 'Corsair', explorer_nx: 'Caspian Explorer', lakonminer: 'Type-11 Prospector',
-};
-const SUIT_NAMES = { flightsuit: 'Flight Suit', utilitysuit: 'Maverick Suit', explorationsuit: 'Artemis Suit', tacticalsuit: 'Dominator Suit' };
-const CLASS_LETTERS = ['', 'E', 'D', 'C', 'B', 'A'];
-const ARMOUR_NAMES = { grade1: 'Lightweight Alloy', grade2: 'Reinforced Alloy', grade3: 'Military Grade Composite', mirrored: 'Mirrored Surface Composite', reactive: 'Reactive Surface Composite' };
-const HARDPOINT_SIZES = { small: 'Small', medium: 'Medium', large: 'Large', huge: 'Huge' };
-const HARDPOINT_MOUNTS = { fixed: 'Fixed', gimbal: 'Gimballed', turret: 'Turreted' };
-// Names for items the game doesn't always log a localised name for.
-const ITEM_NAMES = {
-  int_fighterbay: 'Fighter Hangar', int_fighterbaymk2: 'Fighter Hangar', int_buggybay: 'Planetary Vehicle Hangar',
-  int_planetapproachsuite: 'Planetary Approach Suite', int_planetapproachsuite_advanced: 'Advanced Planetary Approach Suite',
-};
-const VEHICLE_NAMES = {
-  independent_fighter: 'Taipan', federation_fighter: 'F63 Condor', empire_fighter: 'GU-97',
-  gdn_hybrid_fighter_v1: 'Trident', gdn_hybrid_fighter_v2: 'Javelin', gdn_hybrid_fighter_v3: 'Lance',
-  testbuggy: 'SRV Scarab', combat_multicrew_srv_01: 'SRV Scorpion',
-};
-// Cosmetic slots, left out of loadouts.
-const COSMETIC_SLOT_PATTERN = /^(PaintJob|Decal\d|ShipName\d|ShipID\d|Bobble\d+|VesselVoice|WeaponColour|EngineColour|ShipKit|StringLights|ShipCockpit|CargoHatch$)/i;
-
 export default defineStatModule({
   name: 'fleet',
   title: 'Fleet',
   description: 'Ships with their loadouts, suits, weapons, suit loadouts and vehicles.',
-  version: 3,
+  version: 4,
   events: [
     'LoadGame', 'Loadout', 'StoredShips', 'ShipyardSwap', 'ShipyardNew', 'ShipyardBuy', 'ShipyardSell', 'ShipyardTransfer',
     'SellShipOnRebuy', 'SetUserShipName', 'ModuleBuy', 'ModuleSell', 'ModuleSellRemote', 'ModuleStore', 'ModuleRetrieve',
@@ -73,6 +47,7 @@ export default defineStatModule({
     { type: 'table', name: 'fleet_suit_loadouts' },
     { type: 'table', name: 'fleet_vehicles' },
     { type: 'table', name: 'fleet_owned_counts' },
+    { type: 'table', name: 'fleet_stored_modules' },
   ],
   schemaSql: `
     CREATE TABLE IF NOT EXISTS fleet_ships (
@@ -153,6 +128,12 @@ export default defineStatModule({
       last_used_at  TEXT,
       PRIMARY KEY (commander_id, kind, type, loadout)
     );
+    -- The latest StoredModules listing per commander (JSON list of modules).
+    CREATE TABLE IF NOT EXISTS fleet_stored_modules (
+      commander_id  INTEGER PRIMARY KEY REFERENCES commanders(id),
+      modules       TEXT NOT NULL,
+      updated_at    TEXT
+    );
     CREATE TABLE IF NOT EXISTS fleet_owned_counts (
       commander_id  INTEGER PRIMARY KEY REFERENCES commanders(id),
       ships         INTEGER,
@@ -220,6 +201,10 @@ export default defineStatModule({
       INSERT INTO fleet_vehicles (commander_id, kind, type, name, loadout, use_count, last_used_at) VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT (commander_id, kind, type, loadout) DO UPDATE SET name = COALESCE(excluded.name, name),
         use_count = use_count + excluded.use_count, last_used_at = excluded.last_used_at
+    `);
+    const upsertStoredModules = database.prepare(`
+      INSERT INTO fleet_stored_modules (commander_id, modules, updated_at) VALUES (?, ?, ?)
+      ON CONFLICT (commander_id) DO UPDATE SET modules = excluded.modules, updated_at = excluded.updated_at
     `);
     const updateOwnedCounts = database.prepare(`
       INSERT INTO fleet_owned_counts (commander_id, ships, suits, weapons, updated_at) VALUES (?, ?, ?, ?, ?)
@@ -351,6 +336,16 @@ export default defineStatModule({
           return;
         case 'StoredModules':
           for (const item of data.Items ?? []) rememberName(item.Name, item.Name_Localised);
+          upsertStoredModules.run(commanderId, JSON.stringify((data.Items ?? []).map((item) => ({
+            item: normalizeItem(item.Name),
+            name: cleanLocalised(item.Name_Localised),
+            starSystem: item.StarSystem ?? null,
+            value: item.BuyPrice ?? null,
+            isHot: Boolean(item.Hot),
+            inTransit: Boolean(item.InTransit),
+            blueprint: item.EngineerModifications ?? null,
+            level: item.Level ?? null,
+          }))), timestamp);
           return;
 
         case 'BuySuit':
@@ -431,30 +426,34 @@ export default defineStatModule({
     const selectSuitLoadouts = database.prepare('SELECT * FROM fleet_suit_loadouts WHERE commander_id = ? ORDER BY loadout_id');
     const selectVehicles = database.prepare('SELECT * FROM fleet_vehicles WHERE commander_id = ? ORDER BY kind, last_used_at DESC');
     const selectOwnedCounts = database.prepare('SELECT * FROM fleet_owned_counts WHERE commander_id = ?');
+    const selectStoredModules = database.prepare('SELECT modules, updated_at FROM fleet_stored_modules WHERE commander_id = ?');
 
-    // GET /api/stats/fleet?commander=<id> -> ships (with loadouts), suits, weapons, suit loadouts, vehicles
+    const selectShipModules = database.prepare('SELECT modules FROM fleet_ships WHERE commander_id = ? AND ship_id = ?');
+    /** A ship's last loadout with display names, cosmetic slots left out; null when it hasn't been flown. */
+    const describeLoadout = (modulesJson, describeModule) => (modulesJson
+      ? JSON.parse(modulesJson).filter((module) => !isCosmeticSlot(module.slot)).map(describeModule)
+      : null);
+
+    // GET /api/stats/fleet?commander=<id>
+    // Ships (without their loadouts: see /ship), stored modules, suits, weapons, suit loadouts and vehicles.
     router.get('/', (request, response) => {
-      const commanderId = getCommanderIdFilter(request.query);
-      if (commanderId === null) {
-        response.status(400).json({ error: 'Choose a commander' });
-        return;
-      }
+      const commanderId = requireCommanderId(request, response);
+      if (commanderId === null) return;
       const names = new Map(selectNames.all().map((row) => [row.item, row.name]));
+      const describeModule = createModuleDescriber(names);
       const ships = selectShips.all(commanderId).map((row) => {
-        const modules = row.modules
-          ? JSON.parse(row.modules).filter((module) => !COSMETIC_SLOT_PATTERN.test(module.slot ?? '')).map((module) => describeModule(module, names))
-          : null;
-        const loadoutValue = row.hull_value !== null ? (row.hull_value ?? 0) + (row.modules_value ?? 0) : null;
+        const modules = describeLoadout(row.modules, describeModule);
+        const value = getShipValue(row);
         return {
           shipId: row.ship_id,
           shipType: row.ship_type,
-          shipTypeName: names.get(row.ship_type) ?? SHIP_NAMES[row.ship_type] ?? tidyName(row.ship_type),
+          shipTypeName: names.get(row.ship_type) ?? getShipTypeName(row.ship_type),
           name: row.ship_name,
           ident: row.ship_ident,
           isCurrent: Boolean(row.is_current),
           isSold: Boolean(row.sold_at),
           soldAt: row.sold_at,
-          value: row.stored_value ?? loadoutValue,
+          value,
           hullValue: row.hull_value,
           modulesValue: row.modules_value,
           rebuy: row.rebuy,
@@ -467,15 +466,17 @@ export default defineStatModule({
           location: { starSystem: row.star_system, stationName: row.station_name, isInTransit: Boolean(row.in_transit), at: row.location_at },
           isHot: Boolean(row.is_hot),
           firstSeenAt: row.first_seen_at,
-          modules,
+          hasLoadout: modules !== null,
           engineeredCount: modules?.filter((module) => module.engineering).length ?? 0,
+          // Only used here, for the hangars; the loadout itself is fetched per ship.
+          modules,
         };
       });
       const weapons = selectWeapons.all(commanderId).map((row) => ({
         weaponId: row.weapon_id,
         name: row.name ?? tidyName(row.item),
         class: row.class,
-        mods: JSON.parse(row.mods).map(describeOnFootMod),
+        mods: JSON.parse(row.mods).map(getModificationName),
         price: row.price,
         acquiredAt: row.acquired_at,
         isSold: Boolean(row.sold_at),
@@ -484,9 +485,9 @@ export default defineStatModule({
       const weaponsById = new Map(weapons.map((weapon) => [weapon.weaponId, weapon]));
       const suits = selectSuits.all(commanderId).map((row) => ({
         suitId: row.suit_id,
-        name: SUIT_NAMES[row.item?.replace(/_class\d+$/, '')] ?? tidyName(row.item),
+        name: getSuitName(row.item),
         class: row.class,
-        mods: JSON.parse(row.mods).map(describeOnFootMod),
+        mods: JSON.parse(row.mods).map(getModificationName),
         price: row.price,
         acquiredAt: row.acquired_at,
         isSold: Boolean(row.sold_at),
@@ -511,7 +512,38 @@ export default defineStatModule({
         .filter((module) => /fighterbay|buggybay/.test(module.item))
         .map((module) => ({ shipId: ship.shipId, shipName: ship.name, shipTypeName: ship.shipTypeName, module: module.name, rating: module.rating })));
       const ownedCounts = selectOwnedCounts.get(commanderId) ?? null;
-      response.json({ ships, suits, weapons, suitLoadouts, vehicles, hangars, ownedCounts });
+      const storedModulesRow = selectStoredModules.get(commanderId);
+      const storedModules = {
+        items: storedModulesRow ? JSON.parse(storedModulesRow.modules).map((storedModule) => {
+          const described = describeModule({ item: storedModule.item });
+          return {
+            name: storedModule.name ?? described.name,
+            rating: described.rating,
+            starSystem: storedModule.starSystem,
+            value: storedModule.value,
+            isHot: storedModule.isHot,
+            inTransit: storedModule.inTransit,
+            engineering: storedModule.blueprint ? { blueprintName: tidyBlueprint(storedModule.blueprint), level: storedModule.level } : null,
+          };
+        }) : [],
+        updatedAt: storedModulesRow?.updated_at ?? null,
+      };
+      response.json({ ships: ships.map(({ modules, ...ship }) => ship), suits, weapons, suitLoadouts, vehicles, hangars, ownedCounts, storedModules });
+    });
+
+    // GET /api/stats/fleet/ship?commander=<id>&ship=<ship id> -> { shipId, modules }
+    // One ship's loadout: each module with its name, rating, slot and engineering.
+    router.get('/ship', (request, response) => {
+      const commanderId = requireCommanderId(request, response);
+      if (commanderId === null) return;
+      const shipId = Number(request.query.ship);
+      const row = Number.isInteger(shipId) ? selectShipModules.get(commanderId, shipId) : null;
+      if (!row) {
+        response.status(404).json({ error: 'Ship not found' });
+        return;
+      }
+      const describeModule = createModuleDescriber(new Map(selectNames.all().map((nameRow) => [nameRow.item, nameRow.name])));
+      response.json({ shipId, modules: describeLoadout(row.modules, describeModule) });
     });
 
     // GET /api/stats/fleet/export?commander=<id>&ship=<ship id>
@@ -542,6 +574,50 @@ export default defineStatModule({
   },
 });
 
+/**
+ * Fleet totals per commander for the commander overview: ships owned, their value, stored modules
+ * and the ship being flown. Keyed by commander id.
+ */
+export function getFleetSummaries(database) {
+  const summaries = new Map();
+  const shipRows = database.prepare(`
+    SELECT fleet_ships.*, fleet_current_ship.ship_id IS NOT NULL AS is_current, fleet_item_names.name AS localised_type
+    FROM fleet_ships
+    LEFT JOIN fleet_current_ship ON fleet_current_ship.commander_id = fleet_ships.commander_id AND fleet_current_ship.ship_id = fleet_ships.ship_id
+    LEFT JOIN fleet_item_names ON fleet_item_names.item = fleet_ships.ship_type
+    WHERE fleet_ships.sold_at IS NULL
+  `).all();
+  for (const row of shipRows) {
+    const summary = summaries.get(row.commander_id) ?? { shipCount: 0, fleetValue: 0, storedModuleCount: 0, currentShip: null };
+    summary.shipCount += 1;
+    summary.fleetValue += getShipValue(row) ?? 0;
+    if (row.is_current) {
+      summary.currentShip = {
+        shipId: row.ship_id,
+        shipTypeName: row.localised_type ?? getShipTypeName(row.ship_type),
+        name: row.ship_name,
+        ident: row.ship_ident,
+        cargoCapacity: row.cargo_capacity,
+      };
+    }
+    summaries.set(row.commander_id, summary);
+  }
+  for (const row of database.prepare('SELECT commander_id, json_array_length(modules) AS count FROM fleet_stored_modules').all()) {
+    const summary = summaries.get(row.commander_id) ?? { shipCount: 0, fleetValue: 0, storedModuleCount: 0, currentShip: null };
+    summary.storedModuleCount = row.count;
+    summaries.set(row.commander_id, summary);
+  }
+  return summaries;
+}
+
+/** A ship's value: its loadout's (hull + modules) or the shipyard listing's, whichever is newer. */
+function getShipValue(row) {
+  const loadoutValue = row.hull_value !== null && row.hull_value !== undefined ? row.hull_value + (row.modules_value ?? 0) : null;
+  if (loadoutValue === null) return row.stored_value ?? null;
+  if (row.stored_value === null || row.stored_value === undefined) return loadoutValue;
+  return (row.loadout_at ?? '') >= (row.location_at ?? '') ? loadoutValue : row.stored_value;
+}
+
 /** JSON with object keys sorted at every level and no spaces, like Python's json.dumps(sort_keys=True). */
 function stableStringify(value) {
   if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
@@ -549,21 +625,6 @@ function stableStringify(value) {
     return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`).join(',')}}`;
   }
   return JSON.stringify(value);
-}
-
-/** "$int_cargorack_size6_class1_name;" and "Int_CargoRack_Size6_Class1" -> "int_cargorack_size6_class1". */
-function normalizeItem(item) {
-  if (!item) return null;
-  return String(item).replace(/^\$/, '').replace(/_name;$/i, '').replace(/;$/, '').toLowerCase();
-}
-
-function cleanLocalised(name) {
-  return name && !name.startsWith('$') ? name : null;
-}
-
-function getItemClass(item) {
-  const match = /_class(\d+)/i.exec(item ?? '');
-  return match ? Number(match[1]) : null;
 }
 
 function summarizeModule(module) {
@@ -592,77 +653,3 @@ function summarizeModule(module) {
   };
 }
 
-/**
- * A module with a display name ("Cargo Rack") and rating: "6E" for core and optional modules, the
- * size and mount for weapons ("Medium gimballed"). Slot and blueprint names are tidied too.
- */
-function describeModule(module, names) {
-  const item = module.item ?? '';
-  const sizeMatch = /_size(\d+)_class(\d+)/.exec(item);
-  const baseItem = item.replace(/_size\d+_class\d+.*$/, '');
-  const armourMatch = /_armour_(\w+)$/.exec(item);
-  const hardpointMatch = /^hpt_.*?_(fixed|gimbal|turret)_(small|medium|large|huge)/.exec(item);
-  const localised = names.get(item) ?? ITEM_NAMES[baseItem] ?? [...names.entries()].find(([name]) => name.startsWith(`${baseItem}_size`))?.[1];
-  const rating = sizeMatch ? `${sizeMatch[1]}${CLASS_LETTERS[Number(sizeMatch[2])] ?? ''}` : null;
-  return {
-    ...module,
-    mount: hardpointMatch ? HARDPOINT_MOUNTS[hardpointMatch[1]] : null,
-    hardpointSize: hardpointMatch ? Object.keys(HARDPOINT_SIZES).indexOf(hardpointMatch[2]) + 1 : null,
-    slot: tidySlot(module.slot),
-    slotKey: module.slot,
-    name: armourMatch ? ARMOUR_NAMES[armourMatch[1]] ?? tidyName(armourMatch[1]) : localised ?? tidyModuleName(item),
-    rating,
-    engineering: module.engineering ? { ...module.engineering, blueprintName: tidyBlueprint(module.engineering.blueprint) } : null,
-  };
-}
-
-function tidyModuleName(item) {
-  if (!item) return '—';
-  return tidyName(item.replace(/^(hpt|int|ext)_/, '').replace(/_size\d+_class\d+.*$/, '').replace(/_(fixed|gimbal|turret)?_?(tiny|small|medium|large|huge)$/, ''));
-}
-
-/** "Armour_HeavyDuty" -> "Heavy Duty"; "Misc_LightWeight" -> "Light Weight". */
-function tidyBlueprint(blueprint) {
-  if (!blueprint) return null;
-  const withoutCategory = blueprint.includes('_') ? blueprint.slice(blueprint.indexOf('_') + 1) : blueprint;
-  return withoutCategory.replace(/_/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').trim();
-}
-
-/** "Slot04_Size6" -> "Slot 4 (size 6)"; "TinyHardpoint3" -> "Utility 3"; "PrimaryWeapon1" -> "Primary 1". */
-export function tidySlot(slot) {
-  if (!slot) return null;
-  const optional = /^Slot(\d+)_Size(\d+)$/.exec(slot);
-  if (optional) return `Optional ${Number(optional[1])} (size ${optional[2]})`;
-  const hardpoint = /^(Tiny|Small|Medium|Large|Huge)Hardpoint(\d+)$/.exec(slot);
-  if (hardpoint) return hardpoint[1] === 'Tiny' ? `Utility ${hardpoint[2]}` : `${hardpoint[1]} hardpoint ${hardpoint[2]}`;
-  const weapon = /^(Primary|Secondary)Weapon(\d*)$/.exec(slot);
-  if (weapon) return `${weapon[1]}${weapon[2] ? ` ${weapon[2]}` : ''}`;
-  return slot.replace(/([a-z])([A-Z])/g, '$1 $2');
-}
-
-/** A ship type's display name ("type9_military" -> "Type-10 Defender"). */
-export function getShipTypeName(shipType) {
-  const key = normalizeItem(shipType);
-  return SHIP_NAMES[key] ?? tidyName(key);
-}
-
-function tidyName(name) {
-  if (!name) return '—';
-  return String(name).replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-/** "suit_increasedbatterycapacity" -> "Increased Battery Capacity". */
-function describeOnFootMod(mod) {
-  const known = {
-    suit_backpackcapacity: 'Extra Backpack Capacity', suit_increasedammoreserves: 'Extra Ammo Capacity',
-    suit_increasedbatterycapacity: 'Improved Battery Capacity', suit_improvedjumpassist: 'Improved Jump Assist',
-    suit_increasedmeleedamage: 'Added Melee Damage', suit_increasedo2capacity: 'Increased Air Reserves',
-    suit_increasedshieldregen: 'Faster Shield Regen', suit_increasedsprintduration: 'Increased Sprint Duration',
-    suit_improvedradar: 'Enhanced Tracking', suit_nightvision: 'Night Vision', suit_quieterfootsteps: 'Quieter Footsteps',
-    suit_reducedtoolbatteryconsumption: 'Reduced Tool Battery Consumption', suit_improvedarmourrating: 'Damage Resistance',
-    weapon_handling: 'Faster Handling', weapon_scope: 'Scope', weapon_stability: 'Stability', weapon_range: 'Greater Range',
-    weapon_clipsize: 'Magazine Size', weapon_reloadspeed: 'Reload Speed', weapon_accuracy: 'Improved Hip Fire Accuracy',
-    weapon_headshotdamage: 'Headshot Damage', weapon_suppression_unpressurised: 'Noise Suppressor', weapon_backpackreloading: 'Stowed Reloading',
-  };
-  return known[mod] ?? tidyName(String(mod).replace(/^(suit|weapon)_/, ''));
-}

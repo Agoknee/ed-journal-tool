@@ -5,6 +5,7 @@ import { appVersion, parseCommandLineOptions, projectRootPath } from './cli.mjs'
 import { TickMonitor } from './bgs-ticks.mjs';
 import { ClockMonitor } from './clock-check.mjs';
 import { openDatabase } from './database/database.mjs';
+import { compactJournalEntries, vacuumIfDue } from './database/entry-compression.mjs';
 import { EventHub } from './events/event-hub.mjs';
 import { JournalIngester } from './journals/journal-ingester.mjs';
 import { JournalMonitor } from './journals/journal-monitor.mjs';
@@ -30,6 +31,8 @@ export async function startApp() {
   const databasePath = path.resolve(options.database);
   logger.debug(`Opening database "${databasePath}"`);
   const database = openDatabase(databasePath);
+  await compactJournalEntries(database);
+  vacuumIfDue(database);
 
   const eventHub = new EventHub();
   const statsEngine = new StatsEngine({ database, statModules, eventHub });
@@ -82,6 +85,8 @@ export async function startApp() {
   clockMonitor.start();
   tickMonitor.start();
   await journalMonitor.scanJournalDirectory();
+  // A new database gets its compression dictionary once the first scan has stored enough entries.
+  await compactJournalEntries(database);
   journalMonitor.start();
   statusMonitor.start();
 

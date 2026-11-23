@@ -1,6 +1,7 @@
 /**
- * Events used to keep track of where a commander is docked, so trades and deposits can be
- * stamped with the station/system they happened at.
+ * Events used to keep track of where a commander is docked, so trades, deposits, missions and BGS
+ * activity can be stamped with the station they happened at. (FSDJump also clears it when a module
+ * receives it, but it isn't needed: you can't jump while docked.)
  */
 export const DOCKING_EVENTS = ['Docked', 'Undocked', 'Location', 'CarrierJump'];
 
@@ -23,6 +24,7 @@ export function trackDockingState(event, data, moduleState) {
       moduleState.set(DOCKED_AT_STATE_KEY, data.Docked ? toDockedLocation(data) : null);
       return true;
     case 'Undocked':
+    case 'FSDJump':
       moduleState.set(DOCKED_AT_STATE_KEY, null);
       return true;
     default:
@@ -32,7 +34,7 @@ export function trackDockingState(event, data, moduleState) {
 
 /**
  * Returns the station/system the commander is docked at, if it matches the given market id.
- * @returns {{ marketId: number, stationName: string, stationType: string, starSystem: string } | null}
+ * @returns {{ marketId: number, stationName: string, stationType: string, starSystem: string, faction: string | null } | null}
  */
 export function getDockedLocation(moduleState, marketId) {
   const dockedLocation = moduleState.get(DOCKED_AT_STATE_KEY);
@@ -43,8 +45,9 @@ export function getDockedLocation(moduleState, marketId) {
 function toDockedLocation(data) {
   return {
     marketId: data.MarketID ?? null,
-    stationName: data.StationName ?? null,
+    stationName: data.StationName_Localised ?? data.StationName ?? null,
     stationType: data.StationType ?? null,
     starSystem: data.StarSystem ?? null,
+    faction: data.StationFaction?.Name ?? null,
   };
 }

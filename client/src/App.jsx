@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from 'react';
 import { useLiveUpdates } from './hooks/live-updates-context.js';
 import { useApi } from './hooks/use-api.js';
+import { useStoredState } from './hooks/use-stored-state.js';
 import { copyToClipboard } from './clipboard.js';
 import { formatDateTime, formatRelativeTime } from './format.js';
 import NavIcon from './components/NavIcon.jsx';
@@ -165,17 +166,9 @@ function scrollToSubSection(targetId) {
   document.getElementById(targetId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-function readStoredCommander() {
-  try {
-    return localStorage.getItem(COMMANDER_STORAGE_KEY) ?? 'all';
-  } catch {
-    return 'all';
-  }
-}
-
 export default function App() {
   const [activePageId, setActivePageId] = useState(getPageIdFromHash);
-  const [selectedCommander, setSelectedCommander] = useState(readStoredCommander);
+  const [selectedCommander, selectCommander] = useStoredState(COMMANDER_STORAGE_KEY, 'all');
   const commandersRequest = useApi('/api/commanders', {}, ['journals', 'stats']);
   const commanders = commandersRequest.data?.commanders ?? [];
   // The sidebar is a slide-in menu on narrow screens; this is whether it's open there.
@@ -200,15 +193,6 @@ export default function App() {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isMenuOpen]);
-
-  const selectCommander = (commanderValue) => {
-    setSelectedCommander(commanderValue);
-    try {
-      localStorage.setItem(COMMANDER_STORAGE_KEY, commanderValue);
-    } catch {
-      // Storage may be unavailable (private mode); the selection still works for this session.
-    }
-  };
 
   // Fall back to "all" if the stored commander no longer exists.
   const isKnownCommander = selectedCommander === 'all' || commanders.some((commander) => String(commander.id) === selectedCommander);

@@ -1,8 +1,9 @@
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { runInTransaction } from '../database/database.mjs';
+import { getEntryCodec } from '../database/entry-compression.mjs';
 import { logger } from '../logger.mjs';
-import { compareJournalFileNames, getJournalSortKey, isJournalFileName } from './journal-files.mjs';
+import { compareJournalFileNames, getJournalSortKey, isJournalFileName, isLegacyGameVersion } from './journal-files.mjs';
 import { readJournalLines } from './journal-reader.mjs';
 
 /** A file that hasn't been modified for this long is assumed to be finished. */
@@ -154,16 +155,20 @@ export class JournalIngester {
   }
 
   storeEntries(fileRecord, commanderId, readResult) {
+    const codec = getEntryCodec(this.database);
+    const eventCounts = new Map();
     for (const { lineNumber, journalEntry, rawLine } of readResult.parsedLines) {
-      this.statements.insertEntry.run(
+      const { changes } = this.statements.insertEntry.run(
         fileRecord.id,
         commanderId,
         lineNumber,
         journalEntry.timestamp ?? null,
         journalEntry.event,
-        rawLine,
+        codec.encode(rawLine),
       );
+      if (changes) eventCounts.set(journalEntry.event, (eventCounts.get(journalEntry.event) ?? 0) + 1);
     }
+    for (const [eventName, entryCount] of eventCounts) this.statements.addFileEventCount.run(fileRecord.id, eventName, entryCount);
 
     const fileDetails = summarizeFileDetails(readResult.parsedLines, fileRecord);
     this.statements.updateFileProgress.run({
@@ -216,6 +221,7 @@ export class JournalIngester {
   resetFile(fileId) {
     runInTransaction(this.database, () => {
       this.statements.deleteEntriesForFile.run(fileId);
+      this.statements.deleteFileEventCounts.run(fileId);
       this.statements.resetFile.run(fileId);
     });
   }
@@ -300,6 +306,7 @@ function summarizeFileDetails(parsedLines, fileRecord) {
     gameBuild: fileRecord.game_build ?? null,
     filePart: fileRecord.file_part ?? null,
     isOdyssey: fileRecord.is_odyssey ?? null,
+    isLegacy: fileRecord.is_legacy ?? 0,
     isClosed: fileRecord.is_closed ?? 0,
   };
 
@@ -313,6 +320,7 @@ function summarizeFileDetails(parsedLines, fileRecord) {
       fileDetails.gameBuild = journalEntry.build?.trim() ?? null;
       fileDetails.filePart = journalEntry.part ?? null;
       fileDetails.isOdyssey = journalEntry.Odyssey === undefined ? null : Number(Boolean(journalEntry.Odyssey));
+      fileDetails.isLegacy = isLegacyGameVersion(fileDetails.gameVersion) ? 1 : 0;
     }
     if (FILE_CLOSING_EVENTS.has(journalEntry.event)) fileDetails.isClosed = 1;
   }
@@ -342,6 +350,7 @@ function prepareStatements(database) {
         game_build = :gameBuild,
         file_part = :filePart,
         is_odyssey = :isOdyssey,
+        is_legacy = :isLegacy,
         is_closed = :isClosed
       WHERE id = :fileId
     `),
@@ -353,6 +362,11 @@ function prepareStatements(database) {
       WHERE id = ?
     `),
     deleteEntriesForFile: database.prepare('DELETE FROM journal_entries WHERE journal_file_id = ?'),
+    deleteFileEventCounts: database.prepare('DELETE FROM journal_file_events WHERE journal_file_id = ?'),
+    addFileEventCount: database.prepare(`
+      INSERT INTO journal_file_events (journal_file_id, event, entry_count) VALUES (?, ?, ?)
+      ON CONFLICT (journal_file_id, event) DO UPDATE SET entry_count = entry_count + excluded.entry_count
+    `),
     insertEntry: database.prepare(`
       INSERT OR IGNORE INTO journal_entries (journal_file_id, commander_id, line_number, timestamp, event, data)
       VALUES (?, ?, ?, ?, ?, ?)
@@ -370,7 +384,7 @@ function prepareStatements(database) {
     `),
     selectActiveCandidates: database.prepare(`
       SELECT id, commander_id, status, sort_key FROM journal_files
-      WHERE is_closed = 0 AND status IN ('ok', 'pending') AND modified_ms >= ?
+      WHERE is_closed = 0 AND is_legacy = 0 AND status IN ('ok', 'pending') AND modified_ms >= ?
     `),
     selectStalePendingFiles: database.prepare("SELECT file_name FROM journal_files WHERE status = 'pending' AND modified_ms < ?"),
     clearActiveFlags: database.prepare('UPDATE journal_files SET is_active = 0 WHERE is_active = 1'),

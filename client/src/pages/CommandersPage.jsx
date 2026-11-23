@@ -2,6 +2,7 @@ import { useState } from 'react';
 import CopyableText from '../components/CopyableText.jsx';
 import { Badge, KeyValueList, LoadingState, Section, StatCard, StatGrid } from '../components/ui.jsx';
 import { useApi } from '../hooks/use-api.js';
+import { STORED_ID, useStoredState } from '../hooks/use-stored-state.js';
 import {
   formatCredits, formatDuration, formatNumber, formatRelativeTime, formatShipName,
   formatSystemName,
@@ -11,6 +12,7 @@ import EngineersSection from './commanders/EngineersSection.jsx';
 import FleetSection from './commanders/FleetSection.jsx';
 import InventorySection from './commanders/InventorySection.jsx';
 import RanksSection from './commanders/RanksSection.jsx';
+import './commanders/commanders.css';
 
 const DETAIL_COMMANDER_STORAGE_KEY = 'commanders.detailCommander';
 
@@ -18,28 +20,18 @@ export default function CommandersPage({ commanderFilter }) {
   const commanderParams = { commander: commanderFilter };
   const profilesRequest = useApi('/api/stats/commanders', commanderParams);
   const locationsRequest = useApi('/api/stats/travel/locations', commanderParams);
-  const assetsRequest = useApi('/api/stats/assets', commanderParams);
   const carriersRequest = useApi('/api/stats/carriers', commanderParams);
 
   const locationsByCommander = indexBy(locationsRequest.data?.locations, 'commander_id');
-  const assetsByCommander = indexBy(assetsRequest.data?.perCommander, 'commanderId');
   const carrierStatusByCommander = indexBy(carriersRequest.data?.commanderStatuses, 'commanderId');
 
   // The detail sections show one commander: the one chosen at the top of the app, or with all
   // commanders shown, the one picked here (remembered in the browser).
-  const [pickedCommanderId, setPickedCommanderId] = useState(readStoredCommanderId);
+  const [pickedCommanderId, pickCommander] = useStoredState(DETAIL_COMMANDER_STORAGE_KEY, null, STORED_ID);
   const profiles = sortCommandersForDisplay(profilesRequest.data?.commanders ?? []);
   const detailCommanderId = commanderFilter !== 'all'
     ? Number(commanderFilter)
     : profiles.some((profile) => profile.id === pickedCommanderId) ? pickedCommanderId : profiles[0]?.id ?? null;
-  const pickCommander = (commanderId) => {
-    setPickedCommanderId(commanderId);
-    try {
-      localStorage.setItem(DETAIL_COMMANDER_STORAGE_KEY, String(commanderId));
-    } catch {
-      // Storage may be unavailable; the choice still applies for this visit.
-    }
-  };
   // Clicking a commander card's ship or credits shows that commander's details and scrolls to them
   // once they've loaded (the sections act on the request; the nonce makes each click count).
   const [focusRequest, setFocusRequest] = useState(null);
@@ -56,10 +48,10 @@ export default function CommandersPage({ commanderFilter }) {
   return (
     <>
       <Section title="Overview">
-        <LoadingState requestState={assetsRequest}>
-          {({ combined, perCommander }) => (
+        <LoadingState requestState={profilesRequest}>
+          {({ combined, commanders }) => (
             <StatGrid>
-              <StatCard label="Commanders" value={perCommander.length} />
+              <StatCard label="Commanders" value={commanders.length} />
               <StatCard label="Credits" value={formatCredits(combined.credits)} detail="Last known balance" />
               <StatCard label="Ships" value={formatNumber(combined.shipCount)} detail={`Fleet value ${formatCredits(combined.fleetValue)}`} />
               <StatCard label="Stored modules" value={formatNumber(combined.storedModuleCount)} />
@@ -79,7 +71,6 @@ export default function CommandersPage({ commanderFilter }) {
                   key={profile.id}
                   profile={profile}
                   location={locationsByCommander[profile.id]}
-                  assets={assetsByCommander[profile.id]}
                   carrierStatus={carrierStatusByCommander[profile.id]?.carrierStatus}
                   onShowShip={() => showDetails(profile.id, 'loadout')}
                   onShowCredits={() => showDetails(profile.id, 'credits')}
@@ -99,7 +90,9 @@ export default function CommandersPage({ commanderFilter }) {
   );
 }
 
-function CommanderCard({ profile, location, assets, carrierStatus, onShowShip, onShowCredits }) {
+function CommanderCard({ profile, location, carrierStatus, onShowShip, onShowCredits }) {
+  const { summary } = profile;
+  const currentShip = summary.currentShip;
   const ranks = profile.rank_names ?? {};
   const isOnline = profile.active_journal_count > 0;
   return (
@@ -128,7 +121,7 @@ function CommanderCard({ profile, location, assets, carrierStatus, onShowShip, o
           label: 'Ship',
           value: (
             <button type="button" className="link-button link-button-plain" onClick={onShowShip} title="Show this ship’s loadout">
-              {formatShipName(profile.ship_type_name ?? profile.ship_type, profile.ship_name)}
+              {formatShipName(currentShip?.shipTypeName, currentShip?.name)}
             </button>
           ),
         },
@@ -136,11 +129,11 @@ function CommanderCard({ profile, location, assets, carrierStatus, onShowShip, o
           label: 'Credits',
           value: (
             <button type="button" className="link-button link-button-plain" onClick={onShowCredits} title="Show this commander’s credits">
-              {formatCredits(assets?.credits)}
+              {formatCredits(summary.credits)}
             </button>
           ),
         },
-        { label: 'Fleet', value: assets ? `${assets.shipCount} ships · ${formatCredits(assets.fleetValue)}` : null },
+        { label: 'Fleet', value: `${formatNumber(summary.shipCount)} ships · ${formatCredits(summary.fleetValue)}` },
         { label: 'Carrier', value: carrierStatus ?? 'None' },
         isOnline && { label: 'Game mode', value: profile.game_mode ? `${profile.game_mode}${profile.game_group ? ` (${profile.game_group})` : ''}` : null },
         profile.squadron_name && {
@@ -172,13 +165,4 @@ function sortCommandersForDisplay(commanders) {
 
 function indexBy(rows, keyName) {
   return Object.fromEntries((rows ?? []).map((row) => [row[keyName], row]));
-}
-
-function readStoredCommanderId() {
-  try {
-    const storedValue = Number(localStorage.getItem(DETAIL_COMMANDER_STORAGE_KEY));
-    return Number.isInteger(storedValue) && storedValue > 0 ? storedValue : null;
-  } catch {
-    return null;
-  }
 }

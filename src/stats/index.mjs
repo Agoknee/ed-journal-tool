@@ -5,7 +5,6 @@
  *
  * Modules run in this order, so list dependencies (e.g. "markets") first.
  */
-import assetsModule from './modules/assets.mjs';
 import bgsModule from './modules/bgs.mjs';
 import carriersModule from './modules/carriers.mjs';
 import chatModule from './modules/chat.mjs';
@@ -16,6 +15,7 @@ import creditsModule from './modules/credits.mjs';
 import engineersModule from './modules/engineers.mjs';
 import fleetModule from './modules/fleet.mjs';
 import fuelDepositsModule from './modules/fuel-deposits.mjs';
+import inventoryModule from './modules/inventory.mjs';
 import marketsModule from './modules/markets.mjs';
 import missionsModule from './modules/missions.mjs';
 import reputationModule from './modules/reputation.mjs';
@@ -23,9 +23,7 @@ import travelModule from './modules/travel.mjs';
 
 export const statModules = [
   marketsModule,
-  commandersModule,
   travelModule,
-  assetsModule,
   carriersModule,
   commoditiesModule,
   fuelDepositsModule,
@@ -34,7 +32,9 @@ export const statModules = [
   missionsModule,
   combatModule,
   fleetModule,
+  inventoryModule,
   engineersModule,
   reputationModule,
   creditsModule,
+  commandersModule,
 ];

@@ -19,7 +19,35 @@ export function openDatabase(databasePath) {
     PRAGMA busy_timeout = 5000;
   `);
   database.exec(coreSchemaSql);
+  migrateDatabase(database);
   return database;
+}
+
+/**
+ * Brings a database created by an older version up to date: columns added to existing tables
+ * (CREATE TABLE IF NOT EXISTS leaves those alone).
+ */
+function migrateDatabase(database) {
+  const journalFileColumns = new Set(database.prepare('PRAGMA table_info(journal_files)').all().map((column) => column.name));
+  if (!journalFileColumns.has('is_legacy')) {
+    database.exec(`
+      ALTER TABLE journal_files ADD COLUMN is_legacy INTEGER NOT NULL DEFAULT 0;
+      UPDATE journal_files SET is_legacy = 1 WHERE game_version GLOB '[0-3].*';
+    `);
+  }
+
+  // Event counts per file replaced the (commander, time) index on journal entries.
+  const hasCommanderTimeIndex = database.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'index' AND name = 'idx_journal_entries_commander_time'").get();
+  if (hasCommanderTimeIndex) {
+    runInTransaction(database, () => {
+      database.exec(`
+        DELETE FROM journal_file_events;
+        INSERT INTO journal_file_events (journal_file_id, event, entry_count)
+          SELECT journal_file_id, event, COUNT(*) FROM journal_entries GROUP BY journal_file_id, event;
+        DROP INDEX idx_journal_entries_commander_time;
+      `);
+    });
+  }
 }
 
 /**

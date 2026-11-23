@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { defineStatModule } from '../define-stat-module.mjs';
-import { getCommanderIdFilter } from '../query-helpers.mjs';
+import { SqlFilter, addStandardFilters, getCommanderIdFilter, getOrderByClause, getPagination, requireCommanderId, runPaginatedQuery } from '../query-helpers.mjs';
 
 /**
  * Powerplay standing and minor faction reputation. (Pilots' Federation ranks and major faction
@@ -129,13 +129,17 @@ export default defineStatModule({
     const selectDailyMerits = database.prepare(`
       SELECT day, merits FROM powerplay_merits_daily WHERE commander_id = ? AND day >= ? ORDER BY day
     `);
-    const selectFactions = database.prepare(`
-      SELECT faction, reputation, allegiance, government, star_system, updated_at FROM faction_reputation
-      WHERE commander_id = ? ORDER BY reputation DESC, faction
+    // Standings by the game's reputation thresholds (-100 to 100), as the dashboard shows them.
+    const standingSql = `CASE
+      WHEN reputation >= 90 THEN 'Allied' WHEN reputation >= 35 THEN 'Friendly' WHEN reputation > 4 THEN 'Cordial'
+      WHEN reputation >= -35 THEN 'Neutral' WHEN reputation > -90 THEN 'Unfriendly' ELSE 'Hostile' END`;
+    const selectStandingCounts = database.prepare(`
+      SELECT ${standingSql} AS standing, COUNT(*) AS count FROM faction_reputation WHERE commander_id = ? GROUP BY standing
     `);
 
     // GET /api/stats/reputation?commander=<id|all>
-    // Powerplay per commander (with the last 90 days of merits); minor factions when one commander is chosen.
+    // Powerplay per commander (with the last 90 days of merits), and with one commander chosen, how
+    // many minor factions they stand at each level with.
     router.get('/', (request, response) => {
       const commanderId = getCommanderIdFilter(request.query);
       const since = new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10);
@@ -154,15 +158,32 @@ export default defineStatModule({
           dailyMerits: selectDailyMerits.all(row.commander_id, since),
         };
       });
-      const factions = commanderId === null ? null : selectFactions.all(commanderId).map((row) => ({
-        faction: row.faction,
-        reputation: row.reputation,
-        allegiance: row.allegiance,
-        government: row.government?.replace(/^\$government_(.*);$/i, '$1') ?? null,
-        starSystem: row.star_system,
-        updatedAt: row.updated_at,
-      }));
-      response.json({ powerplay, factions });
+      const factionCounts = commanderId === null ? null
+        : Object.fromEntries(selectStandingCounts.all(commanderId).map((row) => [row.standing, row.count]));
+      response.json({ powerplay, factionCounts });
+    });
+
+    // GET /api/stats/reputation/factions?commander=<id>&search=&sort=&order=&limit=&offset=
+    // One commander's reputation with each minor faction, a page at a time. Search matches the
+    // faction, the system it was seen in and its allegiance.
+    router.get('/factions', (request, response) => {
+      const commanderId = requireCommanderId(request, response);
+      if (commanderId === null) return;
+      const page = runPaginatedQuery(database, {
+        selectSql: `
+          SELECT faction, reputation, ${standingSql} AS standing, allegiance, government, star_system AS starSystem, updated_at AS updatedAt
+          FROM faction_reputation
+        `,
+        sqlFilter: addStandardFilters(new SqlFilter().add('commander_id = ?', commanderId), request.query, {
+          searchColumns: ['faction', 'star_system', 'allegiance'],
+        }),
+        orderByClause: `${getOrderByClause(request.query, {
+          faction: 'faction COLLATE NOCASE', reputation: 'reputation', allegiance: 'allegiance', government: 'government', starSystem: 'star_system COLLATE NOCASE', updatedAt: 'updated_at',
+        }, 'reputation')}, faction`,
+        pagination: getPagination(request.query),
+      });
+      page.rows = page.rows.map((row) => ({ ...row, government: row.government?.replace(/^\$government_(.*);$/i, '$1') ?? null }));
+      response.json(page);
     });
 
     return router;

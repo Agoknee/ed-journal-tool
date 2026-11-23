@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { defineStatModule } from '../define-stat-module.mjs';
+import { getDockedLocation, trackDockingState } from '../docking-state.mjs';
 import { getCommanderIdFilter } from '../query-helpers.mjs';
 
 /**
@@ -34,7 +35,6 @@ import { getCommanderIdFilter } from '../query-helpers.mjs';
  */
 const LOCATION_EVENTS = ['Location', 'FSDJump', 'CarrierJump'];
 const SYSTEM_STATE_KEY = 'system';
-const DOCKED_STATE_KEY = 'docked';
 const MISSIONS_STATE_KEY = 'missions';
 const TARGETS_STATE_KEY = 'shipTargets';
 const LAST_TARGET_STATE_KEY = 'lastShipTargeted';
@@ -115,6 +115,7 @@ export default defineStatModule({
     `);
 
     return ({ id: entryId, commanderId, event, timestamp, data }, moduleState) => {
+      trackDockingState(event, data, moduleState);
       const currentSystem = moduleState.get(SYSTEM_STATE_KEY);
 
       /** Records activity in a known system (by default the current one). */
@@ -125,7 +126,7 @@ export default defineStatModule({
 
       /** Station activity: for the docked station's faction, if it's one of the system's factions. */
       const recordForStationFaction = (activityType, value, detail) => {
-        const docked = moduleState.get(DOCKED_STATE_KEY);
+        const docked = getDockedLocation(moduleState);
         if (!docked?.faction || !isSystemFaction(currentSystem, docked.faction)) return;
         record(docked.faction, activityType, value, { detail });
       };
@@ -136,22 +137,9 @@ export default defineStatModule({
         case 'CarrierJump': {
           const system = { address: data.SystemAddress, name: data.StarSystem, factionNames: (data.Factions ?? []).map((faction) => faction.Name) };
           moduleState.set(SYSTEM_STATE_KEY, system);
-          if (event === 'Location' || (event === 'CarrierJump' && data.Docked)) {
-            moduleState.set(DOCKED_STATE_KEY, data.Docked ? toDocked(data) : null);
-          } else if (event === 'FSDJump') {
-            moduleState.set(DOCKED_STATE_KEY, null);
-          }
           if (data.Factions?.length) saveSystemState(data, timestamp);
           break;
         }
-
-        case 'Docked':
-          moduleState.set(DOCKED_STATE_KEY, toDocked(data));
-          break;
-
-        case 'Undocked':
-          moduleState.set(DOCKED_STATE_KEY, null);
-          break;
 
         case 'MissionAccepted': {
           const missions = pruneMissions(moduleState.get(MISSIONS_STATE_KEY) ?? {}, timestamp);
@@ -190,7 +178,7 @@ export default defineStatModule({
         }
 
         case 'RedeemVoucher': {
-          const docked = moduleState.get(DOCKED_STATE_KEY);
+          const docked = getDockedLocation(moduleState);
           // BGS-Tally counts half of a bounty redeemed at a fleet carrier.
           const carrierShare = docked?.stationType === 'FleetCarrier' ? 0.5 : 1;
           if (data.Type === 'bounty') {
@@ -474,14 +462,6 @@ export default defineStatModule({
     return router;
   },
 });
-
-function toDocked(data) {
-  return {
-    faction: data.StationFaction?.Name ?? null,
-    stationType: data.StationType ?? null,
-    marketId: data.MarketID ?? null,
-  };
-}
 
 function isSystemFaction(system, faction) {
   return Boolean(faction) && Boolean(system?.factionNames?.includes(faction));

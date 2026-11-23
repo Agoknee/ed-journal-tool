@@ -1,6 +1,7 @@
 /**
  * Shared helpers for building filtered, paginated SQL queries from API query strings.
  */
+import { toJournalTimestamp } from '../journals/journal-timestamp.mjs';
 
 const PERIOD_DURATIONS_MS = {
   '24h': 24 * 60 * 60 * 1000,
@@ -142,10 +143,6 @@ export function parseJsonColumns(rows, columnNames) {
 }
 
 /** Converts an ISO timestamp to the journal's "YYYY-MM-DDTHH:MM:SSZ" format so string comparisons work. */
-function toJournalTimestamp(isoTimestamp) {
-  return `${isoTimestamp.slice(0, 19)}Z`;
-}
-
 function parseTimestamp(value, { isEndOfRange = false } = {}) {
   if (typeof value !== 'string' || value.trim() === '') return null;
   const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value.trim());
@@ -155,4 +152,19 @@ function parseTimestamp(value, { isEndOfRange = false } = {}) {
 
 function escapeLikePattern(text) {
   return text.replace(/[\\%_]/g, (character) => `\\${character}`);
+}
+
+/** The total of a numeric property over rows (missing or non-numeric values count as 0). */
+export function sumBy(rows, propertyName) {
+  return rows.reduce((total, row) => total + (Number(row[propertyName]) || 0), 0);
+}
+
+/**
+ * The one commander a request is for (?commander=<id>). When it names none (or "all"), answers
+ * 400 and returns null, so a route can stop there.
+ */
+export function requireCommanderId(request, response) {
+  const commanderId = getCommanderIdFilter(request.query);
+  if (commanderId === null) response.status(400).json({ error: 'Choose a commander' });
+  return commanderId;
 }

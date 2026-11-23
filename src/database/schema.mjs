@@ -31,6 +31,7 @@ export const coreSchemaSql = `
     game_build          TEXT,
     file_part           INTEGER,
     is_odyssey          INTEGER,
+    is_legacy           INTEGER NOT NULL DEFAULT 0,  -- written by the Legacy (3.x) game client
     is_closed           INTEGER NOT NULL DEFAULT 0,  -- ended with Shutdown/Continued
     is_active           INTEGER NOT NULL DEFAULT 0,
     created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
@@ -46,11 +47,31 @@ export const coreSchemaSql = `
     line_number      INTEGER NOT NULL,
     timestamp        TEXT,
     event            TEXT NOT NULL,
-    data             TEXT NOT NULL,
+    data             BLOB NOT NULL,  -- the raw journal line, compressed (see database/entry-compression.mjs)
     UNIQUE (journal_file_id, line_number)
   );
   CREATE INDEX IF NOT EXISTS idx_journal_entries_event ON journal_entries(event, id);
-  CREATE INDEX IF NOT EXISTS idx_journal_entries_commander_time ON journal_entries(commander_id, timestamp);
+
+  -- Dictionaries journal entries are compressed against. Never changed or deleted once stored.
+  CREATE TABLE IF NOT EXISTS entry_dictionaries (
+    id          INTEGER PRIMARY KEY,
+    dictionary  BLOB NOT NULL,
+    created_at  TEXT NOT NULL
+  );
+
+  -- How many entries of each event type each journal file has (for the Journals page summary).
+  CREATE TABLE IF NOT EXISTS journal_file_events (
+    journal_file_id  INTEGER NOT NULL REFERENCES journal_files(id) ON DELETE CASCADE,
+    event            TEXT NOT NULL,
+    entry_count      INTEGER NOT NULL,
+    PRIMARY KEY (journal_file_id, event)
+  ) WITHOUT ROWID;
+
+  -- Small key/value store for database housekeeping (such as how far entry compression has got).
+  CREATE TABLE IF NOT EXISTS storage_state (
+    key    TEXT PRIMARY KEY,
+    value  TEXT
+  );
 
   -- Progress tracking for stat modules (one cursor per module).
   CREATE TABLE IF NOT EXISTS stat_modules (

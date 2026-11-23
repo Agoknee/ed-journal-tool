@@ -80,7 +80,7 @@ export function createServer({ database, databasePath, statsEngine, journalMonit
   });
 
   // Express 5 forwards rejected promises here.
-  apiRouter.use((error, request, response, next) => {
+  apiRouter.use((error, request, response, _next) => {
     logger.error(`API error on ${request.method} ${request.originalUrl}:`, error);
     response.status(error.status ?? 500).json({ error: error.message });
   });

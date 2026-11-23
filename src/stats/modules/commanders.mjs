@@ -1,27 +1,23 @@
 import { Router } from 'express';
 import { defineStatModule } from '../define-stat-module.mjs';
-import { getCommanderIdFilter, parseJsonColumns } from '../query-helpers.mjs';
-
-const RANK_NAMES = {
-  Combat: ['Harmless', 'Mostly Harmless', 'Novice', 'Competent', 'Expert', 'Master', 'Dangerous', 'Deadly', 'Elite', 'Elite I', 'Elite II', 'Elite III', 'Elite IV', 'Elite V'],
-  Trade: ['Penniless', 'Mostly Penniless', 'Peddler', 'Dealer', 'Merchant', 'Broker', 'Entrepreneur', 'Tycoon', 'Elite', 'Elite I', 'Elite II', 'Elite III', 'Elite IV', 'Elite V'],
-  Explore: ['Aimless', 'Mostly Aimless', 'Scout', 'Surveyor', 'Trailblazer', 'Pathfinder', 'Ranger', 'Pioneer', 'Elite', 'Elite I', 'Elite II', 'Elite III', 'Elite IV', 'Elite V'],
-  Soldier: ['Defenceless', 'Mostly Defenceless', 'Rookie', 'Soldier', 'Gunslinger', 'Warrior', 'Gladiator', 'Deadeye', 'Elite', 'Elite I', 'Elite II', 'Elite III', 'Elite IV', 'Elite V'],
-  Exobiologist: ['Directionless', 'Mostly Directionless', 'Compiler', 'Collector', 'Cataloguer', 'Taxonomist', 'Ecologist', 'Geneticist', 'Elite', 'Elite I', 'Elite II', 'Elite III', 'Elite IV', 'Elite V'],
-  CQC: ['Helpless', 'Mostly Helpless', 'Amateur', 'Semi Professional', 'Professional', 'Champion', 'Hero', 'Legend', 'Elite', 'Elite I', 'Elite II', 'Elite III', 'Elite IV', 'Elite V'],
-  Federation: ['None', 'Recruit', 'Cadet', 'Midshipman', 'Petty Officer', 'Chief Petty Officer', 'Warrant Officer', 'Ensign', 'Lieutenant', 'Lieutenant Commander', 'Post Commander', 'Post Captain', 'Rear Admiral', 'Vice Admiral', 'Admiral'],
-  Empire: ['None', 'Outsider', 'Serf', 'Master', 'Squire', 'Knight', 'Lord', 'Baron', 'Viscount', 'Count', 'Earl', 'Marquis', 'Duke', 'Prince', 'King'],
-};
+import { describeRanks } from '../../game-data/ranks.mjs';
+import { getCommanderIdFilter, parseJsonColumns, sumBy } from '../query-helpers.mjs';
+import { getCreditSummaries } from './credits.mjs';
+import { getFleetSummaries } from './fleet.mjs';
+import { getInventoryCounts } from './inventory.mjs';
 
 /**
- * Commander profile: current ship, game mode, ranks, reputation and squadron.
+ * Commander profile: game mode, ranks, reputation, squadron and time played. The API adds each
+ * commander's summary from the modules that own it: the ship they're flying and their fleet
+ * (fleet), credits (credits) and item counts (inventory), with totals across commanders.
  */
 export default defineStatModule({
   name: 'commanders',
   title: 'Commanders',
-  description: 'Commander profile details: ship, game mode, ranks, reputation and squadron.',
-  version: 1,
-  events: ['LoadGame', 'Rank', 'Progress', 'Promotion', 'Reputation', 'SquadronStartup', 'JoinedSquadron', 'LeftSquadron', 'Loadout', 'Statistics'],
+  description: 'Commander profile details: game mode, ranks, reputation and squadron, with a summary of each commander.',
+  version: 2,
+  dependsOn: ['fleet', 'credits', 'inventory'],
+  events: ['LoadGame', 'Rank', 'Progress', 'Promotion', 'Reputation', 'SquadronStartup', 'JoinedSquadron', 'LeftSquadron', 'Statistics'],
   ownedObjects: [{ type: 'table', name: 'commander_profiles' }],
   schemaSql: `
     CREATE TABLE IF NOT EXISTS commander_profiles (
@@ -30,10 +26,6 @@ export default defineStatModule({
       game_group       TEXT,
       is_horizons      INTEGER,
       is_odyssey       INTEGER,
-      ship_type        TEXT,
-      ship_type_name   TEXT,
-      ship_name        TEXT,
-      ship_ident       TEXT,
       ranks            TEXT NOT NULL DEFAULT '{}',
       rank_progress    TEXT NOT NULL DEFAULT '{}',
       reputation       TEXT NOT NULL DEFAULT '{}',
@@ -49,12 +41,8 @@ export default defineStatModule({
     const ensureProfile = database.prepare('INSERT OR IGNORE INTO commander_profiles (commander_id) VALUES (?)');
     const selectProfile = database.prepare('SELECT ranks, rank_progress FROM commander_profiles WHERE commander_id = ?');
     const updateLogin = database.prepare(`
-      UPDATE commander_profiles SET game_mode = ?, game_group = ?, is_horizons = ?, is_odyssey = ?,
-        ship_type = ?, ship_type_name = ?, ship_name = ?, ship_ident = ?, last_login = ?, updated_at = ?
+      UPDATE commander_profiles SET game_mode = ?, game_group = ?, is_horizons = ?, is_odyssey = ?, last_login = ?, updated_at = ?
       WHERE commander_id = ?
-    `);
-    const updateShip = database.prepare(`
-      UPDATE commander_profiles SET ship_type = ?, ship_name = ?, ship_ident = ?, updated_at = ? WHERE commander_id = ?
     `);
     const updateRanks = database.prepare('UPDATE commander_profiles SET ranks = ?, updated_at = ? WHERE commander_id = ?');
     const updateRankProgress = database.prepare('UPDATE commander_profiles SET rank_progress = ?, updated_at = ? WHERE commander_id = ?');
@@ -70,13 +58,8 @@ export default defineStatModule({
           updateLogin.run(
             data.GameMode ?? null, data.Group ?? null,
             toNullableFlag(data.Horizons), toNullableFlag(data.Odyssey),
-            data.Ship ?? null, data.Ship_Localised ?? null, data.ShipName || null, data.ShipIdent || null,
             timestamp, timestamp, commanderId,
           );
-          break;
-
-        case 'Loadout':
-          updateShip.run(data.Ship ?? null, data.ShipName || null, data.ShipIdent || null, timestamp, commanderId);
           break;
 
         case 'Rank':
@@ -119,7 +102,6 @@ export default defineStatModule({
       SELECT
         commanders.id, commanders.name, commanders.fid, commanders.first_seen, commanders.last_seen,
         profiles.game_mode, profiles.game_group, profiles.is_horizons, profiles.is_odyssey,
-        profiles.ship_type, profiles.ship_type_name, profiles.ship_name, profiles.ship_ident,
         profiles.ranks, profiles.rank_progress, profiles.reputation,
         profiles.squadron_name, profiles.squadron_rank, profiles.time_played_s, profiles.last_login,
         (SELECT COUNT(*) FROM journal_files WHERE journal_files.commander_id = commanders.id) AS journal_file_count,
@@ -131,14 +113,35 @@ export default defineStatModule({
     `);
 
     // GET /api/stats/commanders?commander=<id|all>
+    // Each commander's profile and summary (summary: credits, wealth, current ship, fleet, stored
+    // modules and item counts), plus the summaries' totals across the commanders returned.
     router.get('/', (request, response) => {
       const commanderRows = selectProfiles.all(getCommanderIdFilter(request.query));
+      const credits = getCreditSummaries(database);
+      const fleets = getFleetSummaries(database);
+      const inventories = getInventoryCounts(database);
       const profiles = parseJsonColumns(commanderRows, ['ranks', 'rank_progress', 'reputation']).map((profile) => ({
         ...profile,
         rank_names: describeRanks(profile.ranks ?? {}),
         next_rank_names: describeRanks(profile.ranks ?? {}, 1),
+        summary: {
+          credits: credits.get(profile.id)?.credits ?? null,
+          currentWealth: credits.get(profile.id)?.currentWealth ?? null,
+          currentShip: fleets.get(profile.id)?.currentShip ?? null,
+          shipCount: fleets.get(profile.id)?.shipCount ?? 0,
+          fleetValue: fleets.get(profile.id)?.fleetValue ?? 0,
+          storedModuleCount: fleets.get(profile.id)?.storedModuleCount ?? 0,
+          materialCount: inventories.get(profile.id)?.materialCount ?? 0,
+          shipLockerCount: inventories.get(profile.id)?.shipLockerCount ?? 0,
+          cargoCount: inventories.get(profile.id)?.cargoCount ?? 0,
+        },
       }));
-      response.json({ commanders: profiles });
+      const summaries = profiles.map((profile) => profile.summary);
+      const combined = Object.fromEntries(
+        ['credits', 'currentWealth', 'shipCount', 'fleetValue', 'storedModuleCount', 'materialCount', 'shipLockerCount', 'cargoCount']
+          .map((key) => [key, sumBy(summaries, key)]),
+      );
+      response.json({ commanders: profiles, combined });
     });
 
     return router;
@@ -148,17 +151,6 @@ export default defineStatModule({
 function pickRankValues(data) {
   const { timestamp, event, ...rankValues } = data;
   return rankValues;
-}
-
-/** Rank names by type; with an offset of 1, the next rank's name (null at the top rank). */
-function describeRanks(ranks, offset = 0) {
-  return Object.fromEntries(
-    Object.entries(ranks).map(([rankType, rankValue]) => {
-      const names = RANK_NAMES[rankType];
-      if (offset) return [rankType, names?.[rankValue + offset] ?? null];
-      return [rankType, names?.[rankValue] ?? String(rankValue)];
-    }),
-  );
 }
 
 function toNullableFlag(value) {

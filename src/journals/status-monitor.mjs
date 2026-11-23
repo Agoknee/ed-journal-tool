@@ -1,6 +1,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { logger } from '../logger.mjs';
+import { getCreditSummaries } from '../stats/modules/credits.mjs';
 
 /**
  * Reads the game's Status.json (read-only), which it rewrites about once a second while playing
@@ -86,7 +87,6 @@ export class StatusMonitor {
       JOIN commanders ON commanders.id = journal_files.commander_id
       WHERE journal_files.is_active = 1 ORDER BY journal_files.modified_ms DESC
     `);
-    this.selectJournalState = null;
   }
 
   start() {
@@ -191,13 +191,23 @@ export class StatusMonitor {
 
   /** What the journal says about each commander: balance at login and the last fuel reading. */
   getJournalState() {
+    const state = new Map();
+    const entry = (commanderId) => {
+      if (!state.has(commanderId)) state.set(commanderId, { balance: null, balance_at: null, fuel_main: null, fuel_at: null });
+      return state.get(commanderId);
+    };
     try {
-      this.selectJournalState ??= this.database.prepare('SELECT commander_id, balance, balance_at, fuel_main, fuel_at FROM combat_status');
-      return new Map(this.selectJournalState.all().map((row) => [row.commander_id, row]));
+      // The latest balance, from a login or carrier transfer (credits module).
+      for (const [commanderId, summary] of getCreditSummaries(this.database)) {
+        Object.assign(entry(commanderId), { balance: summary.credits, balance_at: summary.balanceAt });
+      }
+      // The latest fuel reading (combat module).
+      this.selectFuel ??= this.database.prepare('SELECT commander_id, fuel_main, fuel_at FROM combat_status');
+      for (const row of this.selectFuel.all()) Object.assign(entry(row.commander_id), { fuel_main: row.fuel_main, fuel_at: row.fuel_at });
     } catch {
-      // The combat module's table isn't there (module disabled); go on without it.
-      return new Map();
+      // A module's table isn't there (module disabled); go on with what there is.
     }
+    return state;
   }
 
   /**

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { defineStatModule } from '../define-stat-module.mjs';
 import { DOCKING_EVENTS, getDockedLocation, trackDockingState } from '../docking-state.mjs';
-import { getCommanderIdFilter } from '../query-helpers.mjs';
+import { requireCommanderId } from '../query-helpers.mjs';
 
 /**
  * Each commander's credits: their balance over time, every credit transaction the journal logs
@@ -261,11 +261,8 @@ export default defineStatModule({
     // GET /api/stats/credits?commander=<id>&since=<ISO date, for the categories>&excludeCarrier=true
     // excludeCarrier leaves out commodity trades at fleet carrier markets (not the balance history).
     router.get('/', (request, response) => {
-      const commanderId = getCommanderIdFilter(request.query);
-      if (commanderId === null) {
-        response.status(400).json({ error: 'Choose a commander' });
-        return;
-      }
+      const commanderId = requireCommanderId(request, response);
+      if (commanderId === null) return;
       const since = typeof request.query.since === 'string' && request.query.since ? request.query.since : '0000';
       // is_carrier <= 0 keeps only non-carrier trades; <= 1 keeps everything.
       const maxCarrierFlag = request.query.excludeCarrier === 'true' ? 0 : 1;
@@ -290,4 +287,24 @@ function thinBalances(balances) {
   const byDay = new Map();
   for (const reading of balances) byDay.set(reading.timestamp.slice(0, 10), reading);
   return [...byDay.values()];
+}
+
+/**
+ * Each commander's latest known balance (from logins and carrier transfers) and total wealth (the
+ * game's figure, from Statistics), for the commander overview and the status monitor. Keyed by
+ * commander id.
+ */
+export function getCreditSummaries(database) {
+  const summaries = new Map();
+  const latestBalances = database.prepare(`
+    SELECT commander_id, balance, timestamp FROM credit_balances AS balances
+    WHERE timestamp = (SELECT MAX(timestamp) FROM credit_balances WHERE commander_id = balances.commander_id)
+  `).all();
+  for (const row of latestBalances) summaries.set(row.commander_id, { credits: row.balance, balanceAt: row.timestamp, currentWealth: null });
+  for (const row of database.prepare('SELECT commander_id, data FROM credit_statistics').all()) {
+    const summary = summaries.get(row.commander_id) ?? { credits: null, balanceAt: null, currentWealth: null };
+    summary.currentWealth = JSON.parse(row.data).Bank_Account?.Current_Wealth ?? null;
+    summaries.set(row.commander_id, summary);
+  }
+  return summaries;
 }
