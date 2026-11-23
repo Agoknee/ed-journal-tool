@@ -1,0 +1,10 @@
+/* Combat page */
+.combat-causes { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-bottom: 14px; }
+.combat-cause { display: inline-flex; align-items: center; gap: 6px; }
+.combat-hull-low { color: var(--color-danger); font-weight: 600; }
+.combat-victims { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 18px; }
+.combat-victims > section { min-width: 0; }
+.combat-table-filters { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 10px; }
+.combat-cause { padding: 3px 6px; border: 1px solid transparent; border-radius: 6px; background: none; color: inherit; font: inherit; cursor: pointer; }
+.combat-cause:hover { border-color: var(--color-border); }
+.combat-cause-selected { border-color: var(--color-accent); background: var(--color-accent-soft); }

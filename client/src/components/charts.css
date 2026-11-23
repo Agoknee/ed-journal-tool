@@ -18,3 +18,20 @@
 .chart-tooltip { position: absolute; pointer-events: none; z-index: 2; padding: 6px 10px; border-radius: 6px; background: var(--color-surface-raised); border: 1px solid var(--color-border); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); font-size: 0.85rem; white-space: nowrap; }
 .chart-tooltip-row { display: flex; align-items: center; gap: 6px; }
 .chart-tooltip-row strong { margin-left: auto; padding-left: 12px; font-variant-numeric: tabular-nums; }
+.chart-card { margin: 8px 0 18px; }
+.chart-card .subheading { margin-bottom: 2px; }
+.chart-axis-title { fill: var(--color-text-muted); font-size: 11px; }
+.chart-tooltip-total { margin-top: 2px; padding-top: 2px; border-top: 1px solid var(--color-border); }
+/* Categorical slots for the dark surface, validated CVD-safe as adjacent stacks and as all-pairs scatter. */
+.chart-series-1 { fill: #3987e5; background: #3987e5; }
+.chart-series-2 { fill: #d95926; background: #d95926; }
+.chart-series-3 { fill: #199e70; background: #199e70; }
+.chart-series-other { fill: #6b7280; background: #6b7280; }
+.chart-point { stroke: var(--color-surface); stroke-width: 2; }
+.chart-swatch-dot { border-radius: 50%; }
+.chart-heat-cell { stroke: var(--color-text); }
+.chart-heat-empty { fill: var(--color-surface-raised); }
+.chart-scale { display: flex; align-items: center; gap: 2px; margin-top: 4px; font-size: 0.75rem; color: var(--color-text-muted); }
+.chart-scale-step { width: 22px; height: 8px; border-radius: 2px; }
+.chart-scale > span:first-child { margin-right: 6px; }
+.chart-scale > span:last-child { margin-left: 6px; }

@@ -22,8 +22,6 @@
 .powerplay-panel > p { margin: 6px 0 0; }
 
 /* Commanders: credits */
-.chart-card { margin: 8px 0 18px; }
-.chart-card .subheading { margin-bottom: 2px; }
 .category-table-title { margin: 0 0 6px; font-size: 0.95rem; }
 .category-amount { display: flex; align-items: center; gap: 10px; min-width: 180px; }
 .category-bar-track { flex: 1; height: 8px; position: relative; min-width: 60px; }

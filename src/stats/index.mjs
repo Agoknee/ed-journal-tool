@@ -8,6 +8,7 @@
 import bgsModule from './modules/bgs.mjs';
 import carriersModule from './modules/carriers.mjs';
 import chatModule from './modules/chat.mjs';
+import combatHistoryModule from './modules/combat-history.mjs';
 import combatModule from './modules/combat.mjs';
 import commandersModule from './modules/commanders.mjs';
 import commoditiesModule from './modules/commodities.mjs';
@@ -31,6 +32,7 @@ export const statModules = [
   bgsModule,
   missionsModule,
   combatModule,
+  combatHistoryModule,
   fleetModule,
   inventoryModule,
   engineersModule,

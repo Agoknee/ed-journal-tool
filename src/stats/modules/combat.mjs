@@ -33,11 +33,11 @@ const RECENT_SCANNERS_STATE_KEY = 'recentScanners';
 const RECENT_SCANNER_COUNT = 5;
 const JUMP_STARTED_STATE_KEY = 'jumpStartedAt';
 // A FighterDestroyed this soon after StartJump is the jump taking the fighter, not a kill.
-const JUMP_FIGHTER_LOSS_WINDOW_S = 10;
-const KILL_SESSION_BACKDATE_S = 60;
+export const JUMP_FIGHTER_LOSS_WINDOW_S = 10;
+export const KILL_SESSION_BACKDATE_S = 60;
 const SCAN_SESSION_BACKDATE_S = 30;
 // Drop types for combat instances: "$MULTIPLAYER_SCENARIO..." (RES) and "$Warzone_..." (conflict zones).
-const COMBAT_DROP_PATTERN = /\$MULTIPLAYER|\$Warzone/i;
+export const COMBAT_DROP_PATTERN = /\$MULTIPLAYER|\$Warzone/i;
 
 export default defineStatModule({
   name: 'combat',

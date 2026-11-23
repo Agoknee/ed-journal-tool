@@ -8,6 +8,7 @@ import NavIcon from './components/NavIcon.jsx';
 import BgsPage from './pages/BgsPage.jsx';
 import CarriersPage from './pages/CarriersPage.jsx';
 import ChatPage from './pages/ChatPage.jsx';
+import CombatPage from './pages/CombatPage.jsx';
 import CommandersPage from './pages/CommandersPage.jsx';
 import TradePage from './pages/TradePage.jsx';
 import TravelPage from './pages/TravelPage.jsx';
@@ -92,6 +93,19 @@ const PAGES = [
       { label: 'Massacre Stacks', targetId: 'missions-massacre' },
       { label: 'Mining & Cargo', targetId: 'missions-cargo' },
       { label: 'History', targetId: 'missions-history' },
+    ],
+  },
+  {
+    id: 'combat',
+    label: 'Combat',
+    component: CombatPage,
+    subSections: [
+      { label: 'Overview' },
+      { label: 'Kills Over Time', targetId: 'combat-timeline' },
+      { label: 'When You Fight', targetId: 'combat-heatmap' },
+      { label: 'Sessions', targetId: 'combat-sessions' },
+      { label: 'Deaths', targetId: 'combat-deaths' },
+      { label: 'Victims', targetId: 'combat-victims' },
     ],
   },
   { id: 'chat', label: 'Chat', component: ChatPage },

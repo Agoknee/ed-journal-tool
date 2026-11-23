@@ -46,7 +46,6 @@ const ICON_PATHS = {
       <path d="M14 9h2a1.5 1.5 0 0 1 1.5 1.5V16a1.5 1.5 0 0 0 3 0V7.5L18 5" />
     </>
   ),
-  // Targeting reticle: outer ring, inner ring, crosshair ticks and a center dot
   // Mission data pad: a clipboard with a checklist, the top task ticked
   missions: (
     <>
@@ -56,7 +55,15 @@ const ICON_PATHS = {
       <path d="M13 9.5h3.5M7.5 14h2M13 14h3.5M7.5 18h2M13 18h3.5" />
     </>
   ),
+  // Influence pie: the factions' shares of a system, one slice pulled out
   bgs: (
+    <>
+      <path className="nav-icon-fill" d="M11 3.5a8.5 8.5 0 1 0 8.5 8.5H11z" />
+      <path d="M14 1.5a8.5 8.5 0 0 1 8.5 8.5H14z" />
+    </>
+  ),
+  // Targeting reticle: outer ring, inner ring, crosshair ticks and a center dot
+  combat: (
     <>
       <circle className="nav-icon-fill" cx="12" cy="12" r="8" />
       <circle cx="12" cy="12" r="3.5" />
