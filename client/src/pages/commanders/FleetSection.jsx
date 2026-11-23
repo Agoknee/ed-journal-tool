@@ -2,15 +2,72 @@ import { useEffect, useRef, useState } from 'react';
 import { fetchJson } from '../../api.js';
 import { copyToClipboard } from '../../clipboard.js';
 import DataTable from '../../components/DataTable.jsx';
+import RouteIcon from '../../components/RouteIcon.jsx';
 import { Badge, LoadingState, Section, StatCard, StatGrid } from '../../components/ui.jsx';
 import { useApi } from '../../hooks/use-api.js';
-import { formatCredits, formatDateTime, formatNumber, formatSystemName } from '../../format.js';
+import {
+  formatCredits, formatDateTime, formatNumber, formatRelativeTime, formatShipName, formatSystemName,
+} from '../../format.js';
+import { buildSpanshPlotterUrl, buildWaypointPlannerUrl, isSpanshHelperInstalled, isWaypointHelperInstalled } from '../../spansh.js';
+import SpanshRouteDialog from './SpanshRouteDialog.jsx';
+
+/** A ship's last loadout as EDSY/Coriolis links and SLEF, fetched once per loadout and reused. */
+const exportRequests = new Map();
+function fetchShipExport(commanderId, { shipId, loadoutAt }) {
+  const key = `${commanderId}:${shipId}:${loadoutAt}`;
+  if (!exportRequests.has(key)) {
+    exportRequests.set(key, fetchJson(`/api/stats/fleet/export?commander=${commanderId}&ship=${shipId}`).catch((error) => {
+      exportRequests.delete(key);
+      throw error;
+    }));
+  }
+  return exportRequests.get(key);
+}
 
 /** Ships (with their full loadout), stored modules and vehicles. */
 export default function FleetSection({ commanderId, picker, focusRequest }) {
   const fleetRequest = useApi(commanderId ? '/api/stats/fleet' : null, { commander: commanderId });
+  const locationRequest = useApi(commanderId ? '/api/stats/travel/locations' : null, { commander: commanderId });
   const [selectedShipId, setSelectedShipId] = useState(null);
   const [isSoldShown, setIsSoldShown] = useState(false);
+  const [spanshRequest, setSpanshRequest] = useState(null);
+
+  // A ship's route starts where it is: the commander's system for the ship being flown.
+  const commanderLocation = locationRequest.data?.locations?.find((location) => location.commander_id === commanderId);
+  const getRouteSource = (ship) => (ship.isCurrent
+    ? commanderLocation?.star_system && { name: commanderLocation.star_system, id64: commanderLocation.system_address ?? undefined }
+    : ship.location.starSystem && { name: ship.location.starSystem }) || null;
+  const plotRoute = async (ship) => {
+    const request = {
+      label: formatShipName(ship.shipTypeName, ship.name),
+      source: getRouteSource(ship),
+      getExport: () => fetchShipExport(commanderId, ship),
+    };
+    if (!isSpanshHelperInstalled()) {
+      setSpanshRequest(request);
+      return;
+    }
+    // The tab is opened in the click itself (browsers block it later), then sent on.
+    const newTab = window.open('', '_blank');
+    try {
+      const { slef } = await request.getExport();
+      if (newTab) {
+        newTab.opener = null;
+        newTab.location.href = buildSpanshPlotterUrl({ source: request.source, slef, label: request.label });
+      }
+    } catch {
+      newTab?.close();
+    }
+  };
+  // The Multi Waypoint Planner, starting where the ship is; the userscript then waits for a pasted list.
+  const planWaypoints = (ship) => {
+    const request = { kind: 'waypoints', label: formatShipName(ship.shipTypeName, ship.name), source: getRouteSource(ship) };
+    if (!isWaypointHelperInstalled()) {
+      setSpanshRequest({ ...request, isOutdated: isSpanshHelperInstalled() });
+      return;
+    }
+    window.open(buildWaypointPlannerUrl({ start: request.source, label: request.label }), '_blank', 'noopener');
+  };
 
   // Asked to show a commander's ship (from their card): once their fleet has loaded, select the
   // ship they're flying and scroll to its loadout.
@@ -49,7 +106,12 @@ export default function FleetSection({ commanderId, picker, focusRequest }) {
                     : `${formatNumber(ships.length - ownedShips.length)} sold or lost`}
                 />
                 <StatCard label="Fleet value" value={formatCredits(fleetValue)} tone="accent" />
-                <StatCard label="Engineered modules" value={formatNumber(ownedShips.reduce((total, ship) => total + ship.engineeredCount, 0))} detail="on ships you own" />
+                <StatCard
+                  label="Engineered modules"
+                  value={formatNumber(ownedShips.reduce((total, ship) => total + ship.engineeredCount, 0))}
+                  detail={formatPreEngineeredDetail(ownedShips.reduce((total, ship) => total + (ship.preEngineeredCount ?? 0), 0))}
+                  title="Including modules bought pre-engineered"
+                />
                 <StatCard label="Stored modules" value={formatNumber(storedModules.length)} detail={formatCredits(storedModules.reduce((total, item) => total + (item.value ?? 0), 0))} />
                 <StatCard label="Vehicle hangars" value={formatNumber(hangars.length)} />
               </StatGrid>
@@ -67,6 +129,7 @@ export default function FleetSection({ commanderId, picker, focusRequest }) {
                 rows={shownShips}
                 pageSize={10}
                 pageResetKey={String(isSoldShown)}
+                defaultSort={{ value: 'lastFlownAt', order: 'desc' }}
                 onRowClick={(ship) => setSelectedShipId(ship.shipId)}
                 rowClassName={(ship) => [ship.shipId === selectedShip?.shipId && 'row-selected', ship.isSold && 'row-muted'].filter(Boolean).join(' ')}
                 emptyMessage="No ships recorded yet."
@@ -86,10 +149,30 @@ export default function FleetSection({ commanderId, picker, focusRequest }) {
                   { key: 'rebuy', label: 'Rebuy', align: 'right', render: (ship) => formatCredits(ship.rebuy) },
                   { key: 'maxJumpRange', label: 'Jump', align: 'right', render: (ship) => (ship.maxJumpRange ? `${ship.maxJumpRange.toFixed(1)} ly` : '—') },
                   { key: 'cargoCapacity', label: 'Cargo', align: 'right', render: (ship) => (ship.cargoCapacity === null ? '—' : `${formatNumber(ship.cargoCapacity)} t`) },
-                  { key: 'engineeredCount', label: 'Engineered', align: 'right', render: (ship) => (ship.hasLoadout ? formatNumber(ship.engineeredCount) : '—') },
+                  {
+                    key: 'lastFlownAt',
+                    label: 'Last Flown',
+                    align: 'right',
+                    render: (ship) => (ship.lastFlownAt
+                      ? <span title={formatDateTime(ship.lastFlownAt)}>{formatRelativeTime(ship.lastFlownAt)}</span>
+                      : <span className="muted" title="Not flown since the journals began">—</span>),
+                  },
+                  {
+                    key: 'route',
+                    label: 'Route',
+                    shrink: true,
+                    align: 'center',
+                    render: (ship) => (
+                      <span className="route-buttons">
+                        <RouteButton ship={ship} onPlot={plotRoute} />
+                        <WaypointsButton ship={ship} hasStart={Boolean(getRouteSource(ship))} onPlan={planWaypoints} />
+                      </span>
+                    ),
+                  },
                 ]}
               />
-              <p className="muted small">Click a ship to see its loadout.</p>
+              <p className="muted small">Click a ship to see its loadout. Its route buttons plot a route for it on Spansh, or plan a route through several systems from where it is (paste the list when the planner opens).</p>
+              <SpanshRouteDialog request={spanshRequest} onClose={() => setSpanshRequest(null)} />
 
               {selectedShip && <ShipLoadout key={selectedShip.shipId} ship={selectedShip} commanderId={commanderId} />}
 
@@ -135,7 +218,18 @@ export default function FleetSection({ commanderId, picker, focusRequest }) {
                 emptyMessage="No stored modules recorded."
                 columns={[
                   { key: 'name', label: 'Module', render: (item) => (item.rating ? `${item.rating} ${item.name}` : item.name) },
-                  { key: 'engineering', label: 'Engineering', render: (item) => (item.engineering ? `${item.engineering.blueprintName} G${item.engineering.level}` : '—') },
+                  {
+                    key: 'engineering',
+                    label: 'Engineering',
+                    render: (item) => (item.engineering
+                      ? (
+                        <>
+                          {item.engineering.blueprintName} G{item.engineering.level}
+                          {item.engineering.isPreEngineered && <> <PreEngineeredChip /></>}
+                        </>
+                      )
+                      : '—'),
+                  },
                   { key: 'starSystem', label: 'Location', render: (item) => (item.inTransit ? 'In transit' : formatSystemName(item.starSystem) ?? '—') },
                   { key: 'value', label: 'Value', align: 'right', render: (item) => formatCredits(item.value) },
                 ]}
@@ -145,6 +239,63 @@ export default function FleetSection({ commanderId, picker, focusRequest }) {
         }}
       </LoadingState>
     </Section>
+  );
+}
+
+/** Opens Spansh's Galaxy Plotter for the ship: its build, starting where it is. */
+function RouteButton({ ship, onPlot }) {
+  const unavailableReason = ship.isSold ? 'This ship is sold or lost.' : !ship.loadoutAt ? 'Not flown since the journals began, so its build isn’t known.' : null;
+  return (
+    <button
+      type="button"
+      className="route-button"
+      disabled={Boolean(unavailableReason)}
+      title={unavailableReason ?? 'Plot a route for this ship on Spansh (opens a new tab)'}
+      aria-label={`Plot a route for ${formatShipName(ship.shipTypeName, ship.name)} on Spansh`}
+      onClick={(clickEvent) => {
+        clickEvent.stopPropagation();
+        onPlot(ship);
+      }}
+    >
+      <RouteIcon />
+    </button>
+  );
+}
+
+/** Opens the Multi Waypoint Planner with the ship's system as the start, ready for a pasted list of systems. */
+function WaypointsButton({ ship, hasStart, onPlan }) {
+  const unavailableReason = ship.isSold ? 'This ship is sold or lost.' : !hasStart ? 'Where this ship is isn’t known.' : null;
+  return (
+    <button
+      type="button"
+      className="route-button"
+      disabled={Boolean(unavailableReason)}
+      title={unavailableReason ?? 'Plan a route through several systems from here (Multi Waypoint Planner; paste the list when it opens)'}
+      aria-label={`Plan a multi-waypoint route from ${formatShipName(ship.shipTypeName, ship.name)}’s system`}
+      onClick={(clickEvent) => {
+        clickEvent.stopPropagation();
+        onPlan(ship);
+      }}
+    >
+      <WaypointsIcon />
+    </button>
+  );
+}
+
+/**
+ * A long route: from a start, snaking back and forth through several stops to a flag at the end,
+ * so it reads apart from the Spansh button's three-node route beside it.
+ */
+function WaypointsIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 19.5H15.5a3 3 0 0 0 0-6H8.5a3 3 0 0 1 0-6H17" fill="none" />
+      <circle cx="4" cy="19.5" r="2.3" stroke="none" />
+      <circle cx="12" cy="13.5" r="1.6" stroke="none" />
+      <circle cx="12" cy="7.5" r="1.6" stroke="none" />
+      <path d="M18 7.5V2.5" fill="none" />
+      <path d="M18 2.8h3.6l-1 1.5 1 1.5H18z" strokeWidth="1.2" />
+    </svg>
   );
 }
 
@@ -211,14 +362,7 @@ function ShipLoadout({ ship, commanderId }) {
   const selected = modules.find((module) => module.slotKey === selectedSlot) ?? null;
 
   // The export (EDSY/Coriolis links and SLEF) is only fetched when a button is used, then reused.
-  const exportRef = useRef(null);
-  const getExport = () => {
-    exportRef.current ??= fetchJson(`/api/stats/fleet/export?commander=${commanderId}&ship=${ship.shipId}`).catch((error) => {
-      exportRef.current = null;
-      throw error;
-    });
-    return exportRef.current;
-  };
+  const getExport = () => fetchShipExport(commanderId, ship);
   // A tab is opened straight away (browsers only allow that in the click itself), then sent on.
   const openExternal = async (urlKey) => {
     const newTab = window.open('', '_blank');
@@ -316,6 +460,7 @@ function LoadoutRow({ module, isSelected, onSelect }) {
             <span className="loadout-blueprint">{engineering.blueprintName}</span>
             <GradePips level={engineering.level} />
             {engineering.experimental && <span className="loadout-experimental-chip">{engineering.experimental}</span>}
+            {engineering.isPreEngineered && <PreEngineeredChip />}
           </>
         )}
       </span>
@@ -326,6 +471,16 @@ function LoadoutRow({ module, isSelected, onSelect }) {
       </span>
     </button>
   );
+}
+
+const PRE_ENGINEERED_NOTE = 'Pre-engineered: bought with this blueprint, not made by an engineer';
+
+function PreEngineeredChip() {
+  return <span className="loadout-pre-engineered" title={PRE_ENGINEERED_NOTE}>PE</span>;
+}
+
+function formatPreEngineeredDetail(preEngineeredCount) {
+  return preEngineeredCount > 0 ? `on ships you own · ${formatNumber(preEngineeredCount)} pre-engineered` : 'on ships you own';
 }
 
 function GradePips({ level }) {
@@ -360,7 +515,9 @@ function ModuleDetails({ module }) {
             {engineering.quality !== null && <span className="muted small">{Math.round(engineering.quality * 100)}% quality</span>}
           </div>
           {engineering.experimental && <div className="loadout-experimental-chip module-details-experimental">{engineering.experimental}</div>}
-          {engineering.engineer && <div className="muted small">Engineered by {engineering.engineer}</div>}
+          {engineering.isPreEngineered
+            ? <div className="muted small">{PRE_ENGINEERED_NOTE}</div>
+            : engineering.engineer && <div className="muted small">Engineered by {engineering.engineer}</div>}
           {engineering.modifiers?.length > 0 && (
             <table className="modifier-table">
               <thead>

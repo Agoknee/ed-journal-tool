@@ -12,7 +12,8 @@ import TableSettingsDialog from './TableSettingsDialog.jsx';
  *   without `sorting`, rows are sorted here by sortValue(row), or by row[key] when that's a plain value.
  * rowClassName?(row): extra class names for a row
  * Server-side: pagination: { total, limit, offset, onOffsetChange }, sorting from useTableState
- * Client-side: pageSize pages the rows here; pageResetKey returns to the first page when it changes
+ * Client-side: pageSize pages the rows here; pageResetKey returns to the first page when it changes;
+ *   defaultSort ({ value: column key, order }) applies until a sort is chosen
  */
 export default function DataTable({
   tableId,
@@ -24,6 +25,7 @@ export default function DataTable({
   sorting,
   pageSize: defaultPageSize,
   pageResetKey,
+  defaultSort,
   onRowClick,
   emptyMessage = 'No rows.',
   isLoading,
@@ -58,7 +60,8 @@ export default function DataTable({
     .filter((column) => column.sortValue || rows.some((row) => isPlainValue(row[column.key])))
     .map((column) => column.key));
   const getColumnSortKey = (column) => (isServerSorted ? column.sortKey : clientSortableKeys.has(column.key) && column.key);
-  const clientSort = !isServerSorted && clientSortableKeys.has(settings.sort?.value) ? settings.sort : null;
+  const requestedSort = settings.sort ?? defaultSort;
+  const clientSort = !isServerSorted && clientSortableKeys.has(requestedSort?.value) ? requestedSort : null;
   const currentSort = isServerSorted ? { value: sorting.sort, order: sorting.order } : clientSort;
 
   let displayedRows = rows;
@@ -140,12 +143,18 @@ export default function DataTable({
             <tr>
               {visibleColumns.map((column) => {
                 const columnSortKey = getColumnSortKey(column);
+                // On right-aligned columns the arrow goes first, so the label lines up with the values.
+                const isRightAligned = column.align === 'right';
+                const sortIndicator = currentSort?.value === columnSortKey && (
+                  <span className={isRightAligned ? 'sort-indicator sort-indicator-leading' : 'sort-indicator'}>{currentSort.order === 'asc' ? '▲' : '▼'}</span>
+                );
                 return (
                   <th key={column.key} className={getCellClassName(column)}>
                     {columnSortKey ? (
                       <button type="button" className="sort-button" onClick={() => handleHeaderSortClick(column)}>
+                        {isRightAligned && sortIndicator}
                         {column.label}
-                        {currentSort?.value === columnSortKey && <span className="sort-indicator">{currentSort.order === 'asc' ? '▲' : '▼'}</span>}
+                        {!isRightAligned && sortIndicator}
                       </button>
                     ) : column.label}
                   </th>

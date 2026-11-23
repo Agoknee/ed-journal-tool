@@ -26,7 +26,7 @@ export default function EngineersSection({ commanderId, picker }) {
       actions={picker}
     >
       <LoadingState requestState={engineersRequest}>
-        {({ engineers }) => {
+        {({ engineers, preEngineeredModuleCount }) => {
           const people = engineers.filter((engineer) => !engineer.isRemoteWorkshop);
           const unlocked = people.filter((engineer) => engineer.progress === 'Unlocked');
           const shown = people
@@ -40,7 +40,12 @@ export default function EngineersSection({ commanderId, picker }) {
                 <StatCard label="Unlocked" value={`${formatNumber(unlocked.length)} / ${formatNumber(people.length)}`} tone="accent" />
                 <StatCard label="At grade 5" value={formatNumber(unlocked.filter((engineer) => engineer.rank === MAX_ENGINEER_RANK).length)} />
                 <StatCard label="Blueprints crafted" value={formatNumber(engineers.reduce((total, engineer) => total + engineer.craftCount, 0))} detail={remote ? `${formatNumber(remote.craftCount)} applied remotely` : null} />
-                <StatCard label="Engineered modules" value={formatNumber(engineers.reduce((total, engineer) => total + engineer.modules.length, 0))} detail="on ships you own" />
+                <StatCard
+                  label="Engineered modules"
+                  value={formatNumber(engineers.reduce((total, engineer) => total + engineer.modules.length, 0))}
+                  detail={preEngineeredModuleCount > 0 ? `on ships you own · plus ${formatNumber(preEngineeredModuleCount)} pre-engineered` : 'on ships you own'}
+                  title="Made by an engineer. Modules bought pre-engineered have no engineer, so they aren’t listed under one."
+                />
               </StatGrid>
               <Tabs tabs={ENGINEER_FILTERS} activeTab={filterId} onChange={setFilterId} />
               <div className="card-grid engineer-grid">

@@ -4,3 +4,6 @@
 .note-button-empty { color: var(--color-text-muted); font-style: italic; opacity: 0.7; }
 .note-input { width: 100%; min-width: 180px; padding: 2px 6px; font: inherit; color: var(--color-text); background: var(--color-surface); border: 1px solid var(--color-accent); border-radius: 4px; }
 .note-error { color: var(--color-danger); font-style: normal; }
+/* The route button beside the carrier type pill: raised so its centre lines up with the pill's
+   (the row aligns to the top; the button is 26px tall, the pill about 19px). */
+.carrier-card-badges .route-button { margin-top: -3.5px; margin-bottom: -3.5px; }

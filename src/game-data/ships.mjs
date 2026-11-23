@@ -13,7 +13,8 @@ export const SHIP_NAMES = {
   ferdelance: 'Fer-de-Lance', mamba: 'Mamba', python: 'Python', python_nx: 'Python Mk II', type8: 'Type-8 Transporter',
   type9: 'Type-9 Heavy', belugaliner: 'Beluga Liner', type9_military: 'Type-10 Defender', anaconda: 'Anaconda',
   federation_corvette: 'Federal Corvette', cutter: 'Imperial Cutter', mandalay: 'Mandalay', panthermkii: 'Panther Clipper Mk II',
-  corsair: 'Corsair', explorer_nx: 'Caspian Explorer', lakonminer: 'Type-11 Prospector',
+  corsair: 'Corsair', explorer_nx: 'Caspian Explorer', lakonminer: 'Type-11 Prospector', smallcombat01_nx: 'Kestrel Mk II',
+  mediumtransport01: 'Lynx Highliner',
 };
 
 /** Fighter and SRV display names by the journal's internal type. */
@@ -27,4 +28,19 @@ export const VEHICLE_NAMES = {
 export function getShipTypeName(shipType) {
   const key = normalizeItem(shipType);
   return SHIP_NAMES[key] ?? tidyName(key);
+}
+
+/**
+ * What LoadGame reports as the "ship" when the commander logs in somewhere other than their own
+ * ship: on foot (a suit), in an SRV or fighter, or riding a transport such as the Nomad (lander01).
+ * Suits also have IDs from 4293000000 up.
+ */
+const NON_SHIP_TYPE_PATTERN = /suit($|_)|^testbuggy$|_srv_|_fighter($|_)|^lander\d|taxi/;
+const FIRST_SUIT_ID = 4293000000;
+
+/** Whether a LoadGame-style Ship/ShipID is one of the commander's own ships. */
+export function isOwnShip(shipType, shipId) {
+  const key = normalizeItem(shipType);
+  if (!key || NON_SHIP_TYPE_PATTERN.test(key)) return false;
+  return !(Number.isInteger(shipId) && shipId >= FIRST_SUIT_ID);
 }

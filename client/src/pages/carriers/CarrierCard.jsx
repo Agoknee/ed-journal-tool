@@ -1,6 +1,10 @@
+import { useState } from 'react';
 import DataTable from '../../components/DataTable.jsx';
+import RouteIcon from '../../components/RouteIcon.jsx';
 import { Badge, KeyValueList, ProgressBar } from '../../components/ui.jsx';
 import { formatCredits, formatDateTime, formatFullCredits, formatNumber, formatRelativeTime, formatSystemName } from '../../format.js';
+import { buildSpanshCarrierRouterUrl, isCarrierHelperInstalled, isSpanshHelperInstalled } from '../../spansh.js';
+import SpanshRouteDialog from '../commanders/SpanshRouteDialog.jsx';
 import { CARRIER_TYPE_BADGE_TONES, formatDockingAccess, formatTaxService, toTitleCase } from './carrier-display.jsx';
 
 const MAX_CARRIER_FUEL = 1000;
@@ -23,7 +27,8 @@ export function CarrierCard({ carrier }) {
           <h3>{carrier.name ?? 'Unnamed Carrier'}</h3>
           <div className="muted small">{carrier.callsign ?? '—'} · {carrier.commanders.map((link) => `CMDR ${link.commander_name} (${link.relationship})`).join(', ')}</div>
         </div>
-        <div className="badge-row">
+        <div className="badge-row carrier-card-badges">
+          <CarrierRouteButton carrier={carrier} />
           <Badge tone={CARRIER_TYPE_BADGE_TONES[carrier.carrier_type] ?? 'neutral'}>{carrier.carrier_type_label ?? '?'}</Badge>
           {carrier.is_decommissioned && <Badge tone="danger">Decommissioned</Badge>}
           {!carrier.is_decommissioned && carrier.pending_decommission === 1 && <Badge tone="warning">Decommissioning</Badge>}
@@ -107,6 +112,58 @@ export function CarrierCard({ carrier }) {
 }
 
 /** Two small bars marking a suspended crew service. */
+const SPANSH_CARRIER_TYPES = { FleetCarrier: 'fleet', SquadronCarrier: 'squadron' };
+
+/**
+ * Opens Spansh's Fleet Carrier Router for the carrier: starting where it is, as a fleet or squadron
+ * carrier, with its used capacity (everything but free space: cargo, services and packs).
+ */
+function CarrierRouteButton({ carrier }) {
+  const [dialogRequest, setDialogRequest] = useState(null);
+  const location = carrier.effective_location;
+  const spaceUsage = carrier.space_usage ?? {};
+  const usedCapacity = Number.isFinite(spaceUsage.TotalCapacity) && Number.isFinite(spaceUsage.FreeSpace)
+    ? spaceUsage.TotalCapacity - spaceUsage.FreeSpace
+    : null;
+  const source = location?.starSystem ? { name: location.starSystem, id64: location.systemAddress ?? undefined } : null;
+  const unavailableReason = carrier.is_decommissioned ? 'This carrier has been decommissioned.' : !source ? 'Where this carrier is isn’t known.' : null;
+  const request = {
+    kind: 'carrier',
+    label: carrier.name ?? carrier.callsign ?? 'the carrier',
+    source,
+    carrierType: SPANSH_CARRIER_TYPES[carrier.carrier_type] ?? 'fleet',
+    usedCapacity,
+  };
+  const details = [
+    location?.isAssumed && 'from where it jumped to (not yet confirmed)',
+    usedCapacity === null && 'used capacity unknown',
+  ].filter(Boolean).join('; ');
+
+  const open = () => {
+    if (!isCarrierHelperInstalled()) {
+      setDialogRequest({ ...request, isOutdated: isSpanshHelperInstalled() });
+      return;
+    }
+    window.open(buildSpanshCarrierRouterUrl(request), '_blank', 'noopener');
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        className="route-button"
+        disabled={Boolean(unavailableReason)}
+        title={unavailableReason ?? `Plot a route for this carrier on Spansh (opens a new tab)${details ? `; ${details}` : ''}`}
+        aria-label={`Plot a route for ${request.label} on Spansh’s Fleet Carrier Router`}
+        onClick={open}
+      >
+        <RouteIcon />
+      </button>
+      <SpanshRouteDialog request={dialogRequest} onClose={() => setDialogRequest(null)} />
+    </>
+  );
+}
+
 function PauseIcon() {
   return (
     <svg className="service-pause-icon" viewBox="0 0 8 8" width="8" height="8" aria-label="Suspended">

@@ -6,7 +6,7 @@ import { DOCKING_EVENTS, getDockedLocation, trackDockingState } from '../docking
 import { createModuleDescriber, isCosmeticSlot, tidySlot } from '../../game-data/modules.mjs';
 import { cleanLocalised, getItemClass, normalizeItem, tidyBlueprint, tidyName } from '../../game-data/names.mjs';
 import { getModificationName, getSuitName } from '../../game-data/on-foot.mjs';
-import { getShipTypeName, VEHICLE_NAMES } from '../../game-data/ships.mjs';
+import { getShipTypeName, isOwnShip, VEHICLE_NAMES } from '../../game-data/ships.mjs';
 import { getCommanderIdFilter, requireCommanderId } from '../query-helpers.mjs';
 
 /**
@@ -18,19 +18,23 @@ import { getCommanderIdFilter, requireCommanderId } from '../query-helpers.mjs';
  *   value and where it is).
  * - StoredShips (at a shipyard) lists every ship but the one being flown, so a ship missing from it
  *   has been sold or lost.
+ * - The game reuses a sold ship's ID for the next ship bought; the sold ship's record then moves to
+ *   a negative archive ID so both are kept.
  * - There's no full list of suits and weapons in the journal: they're built from purchases, sales,
  *   upgrades and suit loadouts. Statistics gives how many of each are owned, to compare.
  * - Module and ship names come from the localised names the game logs (when modules are bought,
  *   stored and so on), falling back to the internal names tidied up.
  * - Each ship's last Loadout event is also kept as logged, for exporting to EDSY, Coriolis and SLEF.
  * - A ship's value is from whichever is newer: its loadout (hull + modules) or the shipyard listing.
- * - Stored modules are the latest StoredModules listing (logged at outfitting).
+ * - Stored modules are the latest StoredModules listing (logged at outfitting). The listing doesn't say
+ *   whether a module is pre-engineered; that's remembered when one goes from a ship into storage
+ *   (so not for modules bought straight into storage, nor stored before the journals began).
  */
 export default defineStatModule({
   name: 'fleet',
   title: 'Fleet',
   description: 'Ships with their loadouts, suits, weapons, suit loadouts and vehicles.',
-  version: 4,
+  version: 9,
   events: [
     'LoadGame', 'Loadout', 'StoredShips', 'ShipyardSwap', 'ShipyardNew', 'ShipyardBuy', 'ShipyardSell', 'ShipyardTransfer',
     'SellShipOnRebuy', 'SetUserShipName', 'ModuleBuy', 'ModuleSell', 'ModuleSellRemote', 'ModuleStore', 'ModuleRetrieve',
@@ -73,6 +77,7 @@ export default defineStatModule({
       in_transit      INTEGER NOT NULL DEFAULT 0,
       is_hot          INTEGER NOT NULL DEFAULT 0,
       location_at     TEXT,
+      last_flown_at   TEXT,          -- when the commander last left it (or boarded it, for the ship being flown)
       first_seen_at   TEXT,
       sold_at         TEXT,          -- sold or lost; NULL while owned
       PRIMARY KEY (commander_id, ship_id)
@@ -163,6 +168,16 @@ export default defineStatModule({
     `);
     const updateShipName = database.prepare('UPDATE fleet_ships SET ship_name = ?, ship_ident = ? WHERE commander_id = ? AND ship_id = ?');
     const markSold = database.prepare('UPDATE fleet_ships SET sold_at = ? WHERE commander_id = ? AND ship_id = ? AND sold_at IS NULL');
+    // The game gives a sold ship's ID to the next ship bought. The old ship's record moves to an
+    // archive ID (negative, so it never clashes with a game ID) and stays as sold or lost.
+    const selectShipExists = database.prepare('SELECT 1 FROM fleet_ships WHERE commander_id = ? AND ship_id = ?');
+    const selectLowestArchiveId = database.prepare('SELECT MIN(ship_id) AS id FROM fleet_ships WHERE commander_id = ? AND ship_id < 0');
+    const archiveShip = database.prepare('UPDATE fleet_ships SET ship_id = ?, sold_at = COALESCE(sold_at, ?) WHERE commander_id = ? AND ship_id = ?');
+    const retireReusedShipId = (commanderId, shipId, timestamp) => {
+      if (!Number.isInteger(shipId) || !selectShipExists.get(commanderId, shipId)) return;
+      const archiveId = Math.min(0, selectLowestArchiveId.get(commanderId)?.id ?? 0) - 1;
+      archiveShip.run(archiveId, timestamp, commanderId, shipId);
+    };
     const markUnlistedSold = database.prepare(`
       UPDATE fleet_ships SET sold_at = ? WHERE commander_id = ? AND sold_at IS NULL
         AND ship_id NOT IN (SELECT value FROM json_each(?))
@@ -172,6 +187,9 @@ export default defineStatModule({
       ON CONFLICT (commander_id) DO UPDATE SET ship_id = excluded.ship_id
     `);
     const selectCurrentShip = database.prepare('SELECT ship_id FROM fleet_current_ship WHERE commander_id = ?');
+    const markFlown = database.prepare(`
+      UPDATE fleet_ships SET last_flown_at = ?1 WHERE commander_id = ?2 AND ship_id = ?3 AND (last_flown_at IS NULL OR last_flown_at < ?1)
+    `);
     const upsertName = database.prepare(`
       INSERT INTO fleet_item_names (item, name) VALUES (?, ?) ON CONFLICT (item) DO UPDATE SET name = excluded.name
     `);
@@ -216,14 +234,37 @@ export default defineStatModule({
       if (key && localisedName && !localisedName.startsWith('$')) upsertName.run(key, localisedName);
     };
 
+    // Storage listings don't say whether a module is pre-engineered (no EngineerID), so it's
+    // remembered when one leaves a ship for storage, from that ship's last loadout.
+    const selectShipModulesForStorage = database.prepare('SELECT modules FROM fleet_ships WHERE commander_id = ? AND ship_id = ?');
+    const notePreEngineeredStored = (commanderId, shipId, slot, moduleState) => {
+      const shipRow = selectShipModulesForStorage.get(commanderId, shipId);
+      const module = shipRow?.modules ? JSON.parse(shipRow.modules).find((candidate) => candidate.slot === slot) : null;
+      if (!module?.engineering?.isPreEngineered) return;
+      const signature = storedSignature(module.item, module.engineering.blueprint, module.engineering.level);
+      moduleState.set(PRE_ENGINEERED_STORED_STATE_KEY, [...(moduleState.get(PRE_ENGINEERED_STORED_STATE_KEY) ?? []), signature]);
+    };
+    const takePreEngineeredStored = (signature, moduleState) => {
+      const stored = [...(moduleState.get(PRE_ENGINEERED_STORED_STATE_KEY) ?? [])];
+      const index = signature ? stored.indexOf(signature) : -1;
+      if (index < 0) return;
+      stored.splice(index, 1);
+      moduleState.set(PRE_ENGINEERED_STORED_STATE_KEY, stored);
+    };
+
     return ({ commanderId, event, timestamp, data }, moduleState) => {
       if (trackDockingState(event, data, moduleState)) return;
       const touchShip = (shipId, shipType = null) => {
         if (Number.isInteger(shipId)) ensureShip.run(commanderId, shipId, shipType ? normalizeItem(shipType) : null, timestamp);
       };
+      // Boarding a ship marks it flown now, and the ship left behind as flown until now.
       const becomeCurrent = (shipId, shipType) => {
         touchShip(shipId, shipType);
-        if (Number.isInteger(shipId)) setCurrentShip.run(commanderId, shipId);
+        if (!Number.isInteger(shipId)) return;
+        const previousShipId = selectCurrentShip.get(commanderId)?.ship_id;
+        if (Number.isInteger(previousShipId) && previousShipId !== shipId) markFlown.run(timestamp, commanderId, previousShipId);
+        markFlown.run(timestamp, commanderId, shipId);
+        setCurrentShip.run(commanderId, shipId);
       };
       // A ship left at the station the commander is docked at.
       const storeHere = (shipId, shipType) => {
@@ -236,6 +277,9 @@ export default defineStatModule({
       switch (event) {
         case 'LoadGame':
           rememberName(data.Ship, data.Ship_Localised);
+          // Logged in on foot, in an SRV or on a transport: that's not a ship of theirs, and the
+          // ship they came in stays their current one.
+          if (!isOwnShip(data.Ship, data.ShipID)) return;
           becomeCurrent(data.ShipID, data.Ship);
           if (data.ShipName !== undefined) updateShipName.run(data.ShipName.trim() || null, data.ShipIdent?.trim() || null, commanderId, data.ShipID);
           return;
@@ -280,6 +324,8 @@ export default defineStatModule({
 
         case 'ShipyardNew':
           rememberName(data.ShipType, data.ShipType_Localised);
+          // A brand-new ship: anything already recorded under its ID was an earlier ship, since sold.
+          retireReusedShipId(commanderId, data.NewShipID, timestamp);
           becomeCurrent(data.NewShipID, data.ShipType);
           return;
 
@@ -315,6 +361,8 @@ export default defineStatModule({
           rememberName(data.BuyItem, data.BuyItem_Localised);
           rememberName(data.SellItem, data.SellItem_Localised);
           rememberName(data.StoredItem, data.StoredItem_Localised);
+          // Buying can send the module that was in the slot to storage.
+          if (data.StoredItem) notePreEngineeredStored(commanderId, data.ShipID, data.Slot, moduleState);
           return;
         case 'ModuleSell':
         case 'ModuleSellRemote':
@@ -323,10 +371,14 @@ export default defineStatModule({
         case 'ModuleStore':
           rememberName(data.StoredItem, data.StoredItem_Localised);
           rememberName(data.ReplacementItem, data.ReplacementItem_Localised);
+          notePreEngineeredStored(commanderId, data.ShipID, data.Slot, moduleState);
           return;
         case 'ModuleRetrieve':
           rememberName(data.RetrievedItem, data.RetrievedItem_Localised);
           rememberName(data.SwapOutItem, data.SwapOutItem_Localised);
+          // The module taken out goes onto the ship (its next Loadout shows it); the one it replaces goes to storage.
+          if (data.SwapOutItem) notePreEngineeredStored(commanderId, data.ShipID, data.Slot, moduleState);
+          takePreEngineeredStored(storedSignature(data.RetrievedItem, data.EngineerModifications, data.Level), moduleState);
           return;
         case 'ModuleBuyAndStore':
           rememberName(data.BuyItem, data.BuyItem_Localised);
@@ -334,19 +386,32 @@ export default defineStatModule({
         case 'FetchRemoteModule':
           rememberName(data.StoredItem, data.StoredItem_Localised);
           return;
-        case 'StoredModules':
+        case 'StoredModules': {
           for (const item of data.Items ?? []) rememberName(item.Name, item.Name_Localised);
-          upsertStoredModules.run(commanderId, JSON.stringify((data.Items ?? []).map((item) => ({
-            item: normalizeItem(item.Name),
-            name: cleanLocalised(item.Name_Localised),
-            starSystem: item.StarSystem ?? null,
-            value: item.BuyPrice ?? null,
-            isHot: Boolean(item.Hot),
-            inTransit: Boolean(item.InTransit),
-            blueprint: item.EngineerModifications ?? null,
-            level: item.Level ?? null,
-          }))), timestamp);
+          // Match the listing against the pre-engineered modules seen going into storage. Ones no
+          // longer listed (sold from storage, say) are forgotten.
+          const unmatched = [...(moduleState.get(PRE_ENGINEERED_STORED_STATE_KEY) ?? [])];
+          const matched = [];
+          const items = (data.Items ?? []).map((item) => {
+            const signature = storedSignature(item.Name, item.EngineerModifications, item.Level);
+            const matchIndex = signature ? unmatched.indexOf(signature) : -1;
+            if (matchIndex >= 0) matched.push(...unmatched.splice(matchIndex, 1));
+            return {
+              item: normalizeItem(item.Name),
+              name: cleanLocalised(item.Name_Localised),
+              starSystem: item.StarSystem ?? null,
+              value: item.BuyPrice ?? null,
+              isHot: Boolean(item.Hot),
+              inTransit: Boolean(item.InTransit),
+              blueprint: item.EngineerModifications ?? null,
+              level: item.Level ?? null,
+              isPreEngineered: matchIndex >= 0,
+            };
+          });
+          moduleState.set(PRE_ENGINEERED_STORED_STATE_KEY, matched);
+          upsertStoredModules.run(commanderId, JSON.stringify(items), timestamp);
           return;
+        }
 
         case 'BuySuit':
           upsertSuit.run(commanderId, data.SuitID, normalizeItem(data.Name), getItemClass(data.Name) ?? 1, JSON.stringify(data.SuitMods ?? []), data.Price ?? null, timestamp);
@@ -416,9 +481,10 @@ export default defineStatModule({
     const selectNames = database.prepare('SELECT item, name FROM fleet_item_names');
     const selectRawLoadout = database.prepare('SELECT ship_type, ship_name, raw_loadout FROM fleet_ships WHERE commander_id = ? AND ship_id = ?');
     const selectShips = database.prepare(`
-      SELECT fleet_ships.*, fleet_current_ship.ship_id IS NOT NULL AS is_current
+      SELECT fleet_ships.*, fleet_current_ship.ship_id IS NOT NULL AS is_current, commanders.last_seen AS commander_last_seen
       FROM fleet_ships LEFT JOIN fleet_current_ship
         ON fleet_current_ship.commander_id = fleet_ships.commander_id AND fleet_current_ship.ship_id = fleet_ships.ship_id
+      JOIN commanders ON commanders.id = fleet_ships.commander_id
       WHERE fleet_ships.commander_id = ? ORDER BY fleet_ships.sold_at IS NOT NULL, is_current DESC, fleet_ships.ship_id
     `);
     const selectSuits = database.prepare('SELECT * FROM fleet_suits WHERE commander_id = ? ORDER BY sold_at IS NOT NULL, acquired_at');
@@ -463,11 +529,14 @@ export default defineStatModule({
           fuelCapacity: row.fuel_capacity,
           unladenMass: row.unladen_mass,
           loadoutAt: row.loadout_at,
+          // The ship being flown was in use up to the commander's latest journal entry.
+          lastFlownAt: row.is_current ? latest(row.last_flown_at, row.commander_last_seen) : row.last_flown_at,
           location: { starSystem: row.star_system, stationName: row.station_name, isInTransit: Boolean(row.in_transit), at: row.location_at },
           isHot: Boolean(row.is_hot),
           firstSeenAt: row.first_seen_at,
           hasLoadout: modules !== null,
           engineeredCount: modules?.filter((module) => module.engineering).length ?? 0,
+          preEngineeredCount: modules?.filter((module) => module.engineering?.isPreEngineered).length ?? 0,
           // Only used here, for the hangars; the loadout itself is fetched per ship.
           modules,
         };
@@ -523,7 +592,9 @@ export default defineStatModule({
             value: storedModule.value,
             isHot: storedModule.isHot,
             inTransit: storedModule.inTransit,
-            engineering: storedModule.blueprint ? { blueprintName: tidyBlueprint(storedModule.blueprint), level: storedModule.level } : null,
+            engineering: storedModule.blueprint
+              ? { blueprintName: tidyBlueprint(storedModule.blueprint), level: storedModule.level, isPreEngineered: Boolean(storedModule.isPreEngineered) }
+              : null,
           };
         }) : [],
         updatedAt: storedModulesRow?.updated_at ?? null,
@@ -611,6 +682,12 @@ export function getFleetSummaries(database) {
 }
 
 /** A ship's value: its loadout's (hull + modules) or the shipyard listing's, whichever is newer. */
+/** The later of two ISO timestamps, either of which may be missing. */
+function latest(first, second) {
+  if (!first || !second) return first ?? second ?? null;
+  return first > second ? first : second;
+}
+
 function getShipValue(row) {
   const loadoutValue = row.hull_value !== null && row.hull_value !== undefined ? row.hull_value + (row.modules_value ?? 0) : null;
   if (loadoutValue === null) return row.stored_value ?? null;
@@ -627,6 +704,25 @@ function stableStringify(value) {
   return JSON.stringify(value);
 }
 
+/**
+ * Modules bought already engineered (such as the SCO frame shift drives sold pre-engineered with
+ * Increased Range) carry EngineerID 399999 and no engineer's name. Experimental effects added to
+ * them later through the Remote Workshop keep it that way.
+ */
+const NO_ENGINEER_ID = 399999;
+function isPreEngineered(engineering) {
+  return engineering.EngineerID === NO_ENGINEER_ID && !engineering.Engineer;
+}
+
+/** Pre-engineered modules put into storage and not yet taken back out, as storedSignature()s. */
+const PRE_ENGINEERED_STORED_STATE_KEY = 'preEngineeredStored';
+
+/** What identifies an engineered module in storage: its item, blueprint and grade. */
+function storedSignature(item, blueprint, level) {
+  const key = normalizeItem(item);
+  return key && blueprint ? `${key}|${blueprint}|${level ?? ''}` : null;
+}
+
 function summarizeModule(module) {
   const engineering = module.Engineering;
   return {
@@ -639,6 +735,7 @@ function summarizeModule(module) {
     ammo: module.AmmoInClip !== undefined ? { clip: module.AmmoInClip, hopper: module.AmmoInHopper ?? null } : null,
     engineering: engineering ? {
       engineer: engineering.Engineer ?? null,
+      isPreEngineered: isPreEngineered(engineering),
       blueprint: engineering.BlueprintName ?? null,
       level: engineering.Level ?? null,
       quality: engineering.Quality ?? null,

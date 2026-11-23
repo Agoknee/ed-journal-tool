@@ -235,6 +235,7 @@ button.last-tick:hover { border-color: var(--color-border); }
 .empty-cell { text-align: center !important; color: var(--color-text-muted); padding: 18px !important; }
 .sort-button { background: none; border: none; padding: 0; color: inherit; font: inherit; text-transform: inherit; letter-spacing: inherit; white-space: nowrap; text-align: inherit; }
 .sort-indicator { margin-left: 4px; color: var(--color-accent); }
+.sort-indicator-leading { margin-left: 0; margin-right: 4px; }
 
 /*
  * Table settings: a gear over the right end of each header row, and its dialog. The last header

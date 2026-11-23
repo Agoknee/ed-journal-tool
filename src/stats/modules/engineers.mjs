@@ -115,10 +115,13 @@ export default defineStatModule({
       const commanderId = requireCommanderId(request, response);
       if (commanderId === null) return;
       const crafts = selectCrafts.all(commanderId);
-      // Engineered modules on the ships the commander still owns, by engineer name.
+      // Engineered modules on the ships the commander still owns, by engineer name. Pre-engineered
+      // ones have no engineer; they're only counted.
       const modulesByEngineer = new Map();
+      let preEngineeredModuleCount = 0;
       for (const ship of selectShipModules.all(commanderId)) {
         for (const module of JSON.parse(ship.modules)) {
+          if (module.engineering?.isPreEngineered) preEngineeredModuleCount += 1;
           const engineer = module.engineering?.engineer;
           if (!engineer) continue;
           if (!modulesByEngineer.has(engineer)) modulesByEngineer.set(engineer, []);
@@ -152,7 +155,7 @@ export default defineStatModule({
           modules: modulesByEngineer.get(row.engineer) ?? [],
         };
       });
-      response.json({ engineers, pinnedBlueprints: null });
+      response.json({ engineers, preEngineeredModuleCount, pinnedBlueprints: null });
     });
 
     return router;
