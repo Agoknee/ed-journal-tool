@@ -29,6 +29,10 @@ export function openDatabase(databasePath) {
  */
 function migrateDatabase(database) {
   const journalFileColumns = new Set(database.prepare('PRAGMA table_info(journal_files)').all().map((column) => column.name));
+  if (!journalFileColumns.has('is_missing')) database.exec('ALTER TABLE journal_files ADD COLUMN is_missing INTEGER NOT NULL DEFAULT 0;');
+  // Filled in from each journal's stored first entry by the ingester.
+  if (!journalFileColumns.has('header_hash')) database.exec('ALTER TABLE journal_files ADD COLUMN header_hash TEXT;');
+  database.exec('CREATE INDEX IF NOT EXISTS idx_journal_files_header ON journal_files(header_hash);');
   if (!journalFileColumns.has('is_legacy')) {
     database.exec(`
       ALTER TABLE journal_files ADD COLUMN is_legacy INTEGER NOT NULL DEFAULT 0;

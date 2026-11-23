@@ -42,6 +42,7 @@ export class JournalMonitor {
   /** Reads every journal file that changed since the last run. */
   async scanJournalDirectory() {
     const journalFileNames = await this.ingester.listJournalFileNames();
+    this.ingester.markMissingFiles(journalFileNames);
     this.scanProgress = { isScanning: true, totalFiles: journalFileNames.length, processedFiles: 0, newEntries: 0 };
     logger.info(`Scanning ${journalFileNames.length} journal files in "${this.ingester.journalDirectory}"...`);
     this.eventHub.publish('scan', this.scanProgress);
@@ -85,6 +86,7 @@ export class JournalMonitor {
     this.watcher
       .on('add', (filePath) => this.handleFileEvent('added', filePath))
       .on('change', (filePath) => this.handleFileEvent('changed', filePath))
+      .on('unlink', (filePath) => this.handleFileRemoved(filePath))
       .on('error', (error) => logger.error('Journal watcher error:', error));
 
     this.timers.push(setInterval(() => this.pollActiveFiles(), ACTIVE_FILE_POLL_MS));
@@ -104,6 +106,14 @@ export class JournalMonitor {
     if (!isJournalFileName(fileName)) return;
     logger.debug(`Journal file ${changeType}: ${fileName}`);
     this.queueFile(fileName);
+  }
+
+  handleFileRemoved(filePath) {
+    const fileName = path.basename(filePath);
+    if (!isJournalFileName(fileName) || !this.ingester.markFileMissing(fileName)) return;
+    logger.info(`Journal file "${fileName}" was removed from the journal folder; its entries are kept.`);
+    this.refreshActiveFiles();
+    this.eventHub.publish('journals', { reason: 'files-updated' });
   }
 
   pollActiveFiles() {
@@ -182,9 +192,10 @@ export class JournalMonitor {
   }
 
   async updateStats() {
+    if (this.ingester.restoreEntryOrderIfNeeded()) this.needsStatsRebuild = true;
     if (this.needsStatsRebuild) {
       this.needsStatsRebuild = false;
-      logger.info('Journal data was removed or rewritten; rebuilding all stats.');
+      logger.info('Stored journal entries were replaced or reordered; rebuilding all stats.');
       this.statsEngine.resetAllModules();
     }
     await this.statsEngine.processNewEntries();

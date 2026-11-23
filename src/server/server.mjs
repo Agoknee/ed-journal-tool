@@ -52,7 +52,7 @@ export function createServer({ database, databasePath, statsEngine, journalMonit
     response.json(statusMonitor.getStatus());
   });
 
-  apiRouter.use('/', createJournalRoutes(database));
+  apiRouter.use('/', createJournalRoutes(database, { journalDirectory }));
   apiRouter.use('/sql', createSqlRoutes(databasePath, database));
   apiRouter.use('/events', createEventRoutes(eventHub));
   apiRouter.use('/', createNoteRoutes(database, eventHub));

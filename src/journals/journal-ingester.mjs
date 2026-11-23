@@ -1,8 +1,10 @@
-import { readdir, stat } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { lstat, open, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { runInTransaction } from '../database/database.mjs';
 import { getEntryCodec } from '../database/entry-compression.mjs';
 import { logger } from '../logger.mjs';
+import { checkStoredEntryOrderOnce, isStoredOutOfOrder, noteLateJournal, restoreEntryOrderIfNeeded } from './entry-order.mjs';
 import { compareJournalFileNames, getJournalSortKey, isJournalFileName, isLegacyGameVersion } from './journal-files.mjs';
 import { readJournalLines } from './journal-reader.mjs';
 
@@ -11,6 +13,9 @@ const SETTLED_AFTER_MS = 2 * 60 * 1000;
 
 /** An unclosed journal modified within this window may still be in use by the game. */
 const ACTIVE_WINDOW_MS = 60 * 60 * 1000;
+
+/** How much of a file is read to find its first entry (the Fileheader line is a few hundred bytes). */
+const HEADER_READ_BYTES = 64 * 1024;
 
 const COMMANDER_IDENTITY_EVENTS = new Set(['Commander', 'LoadGame', 'NewCommander']);
 const FILE_CLOSING_EVENTS = new Set(['Shutdown', 'Continued']);
@@ -29,6 +34,8 @@ export class JournalIngester {
     this.database = database;
     this.journalDirectory = journalDirectory;
     this.statements = prepareStatements(database);
+    this.backfillHeaderHashes();
+    checkStoredEntryOrderOnce(database);
   }
 
   async listJournalFileNames() {
@@ -51,11 +58,17 @@ export class JournalIngester {
 
     let fileStats;
     try {
-      fileStats = await stat(filePath);
+      // lstat: a link named like a journal is never followed (the directory scan skips links too).
+      fileStats = await lstat(filePath);
     } catch (error) {
-      if (error.code === 'ENOENT') return result;
+      if (error.code === 'ENOENT') {
+        this.markFileMissing(fileName);
+        return result;
+      }
       throw error;
     }
+
+    if (!fileStats.isFile()) return result;
 
     const fileSize = fileStats.size;
     const modifiedMs = Math.trunc(fileStats.mtimeMs);
@@ -66,11 +79,29 @@ export class JournalIngester {
       this.statements.insertFile.run(fileName, getJournalSortKey(fileName));
       fileRecord = this.statements.selectFileByName.get(fileName);
     }
+    if (fileRecord.is_missing) {
+      this.statements.setFileMissing.run(0, fileRecord.id);
+      fileRecord = this.statements.selectFileByName.get(fileName);
+    }
 
     const isUnchanged = fileRecord.file_size === fileSize && fileRecord.modified_ms === modifiedMs;
     const hasUnreadTail = fileRecord.status === 'ok' && fileRecord.bytes_read < fileSize;
     const isAwaitingCommander = fileRecord.status === 'pending';
     if (isUnchanged && !hasUnreadTail && !isAwaitingCommander && !skipUnparseable) return result;
+
+    // A journal is identified by its first entry (the Fileheader, stamped with the second the game
+    // started it). A different first entry means a different journal was saved under this name.
+    const headerHash = await readHeaderHash(filePath);
+    if (headerHash && fileRecord.header_hash && headerHash !== fileRecord.header_hash && fileRecord.status !== 'pending') {
+      logger.warn(`Journal file "${fileName}" was replaced by a different journal; re-reading it from the start.`);
+      if (fileRecord.status === 'ok') result.requiresStatsRebuild = true;
+      this.resetFile(fileRecord.id);
+      fileRecord = this.statements.selectFileByName.get(fileName);
+    }
+    if (headerHash && headerHash !== fileRecord.header_hash) {
+      this.statements.updateHeaderHash.run(headerHash, fileRecord.id);
+      fileRecord = { ...fileRecord, header_hash: headerHash };
+    }
 
     // A file that shrank was rewritten; start over.
     if (fileRecord.status === 'ok' && fileSize < fileRecord.bytes_read) {
@@ -144,12 +175,27 @@ export class JournalIngester {
       return { newEntryCount: 0, needsRetry: readResult.isBlockedByBadLine };
     }
 
+    let originalFile = null;
     runInTransaction(this.database, () => {
       const commanderId = this.upsertCommander(commanderIdentities[0]);
+      originalFile = fileRecord.header_hash ? this.statements.selectSameJournal.get(fileRecord.header_hash, commanderId, fileRecord.id) : null;
+      if (originalFile) {
+        this.statements.updateFileStatus.run('duplicate', `Same journal as ${originalFile.file_name}`, commanderId, fileRecord.id);
+        this.updateUnassignedFileDetails(fileRecord.id, readResult, fileDetails);
+        return;
+      }
       this.statements.updateFileStatus.run('ok', null, commanderId, fileRecord.id);
       this.storeEntries({ ...fileRecord, bytes_read: 0, line_count: 0, entry_count: 0, skipped_line_count: 0 }, commanderId, readResult);
     });
+    if (originalFile) {
+      logger.info(`Journal file "${fileRecord.file_name}" is a copy of "${originalFile.file_name}"; its entries aren't stored again.`);
+      return { newEntryCount: 0, needsRetry: false };
+    }
     logger.debug(`Journal file "${fileRecord.file_name}" assigned to CMDR ${commanderIdentities[0].name}`);
+    if (isStoredOutOfOrder(this.database, fileRecord.id)) {
+      logger.info(`Journal file "${fileRecord.file_name}" is older than journals already read; entries will be put back in time order.`);
+      noteLateJournal(this.database, this.statements.selectFileByName.get(fileRecord.file_name).first_timestamp);
+    }
 
     return { newEntryCount: readResult.parsedLines.length, needsRetry: readResult.isBlockedByBadLine };
   }
@@ -217,6 +263,53 @@ export class JournalIngester {
     return commanderRecord.id;
   }
 
+  /**
+   * Puts stored entries back in time order if older journals were read after newer ones.
+   * @returns {boolean} whether entries moved, in which case all stats need rebuilding
+   */
+  restoreEntryOrderIfNeeded() {
+    return restoreEntryOrderIfNeeded(this.database);
+  }
+
+  /**
+   * Flags journals no longer in the journal folder (and clears the flag for ones that are back).
+   * Their entries and stats are kept, so tidying up old journals doesn't lose history.
+   * @param {string[]} fileNamesOnDisk
+   */
+  markMissingFiles(fileNamesOnDisk) {
+    const presentFileNames = new Set(fileNamesOnDisk);
+    runInTransaction(this.database, () => {
+      for (const file of this.statements.selectFileMissingFlags.all()) {
+        const isMissing = presentFileNames.has(file.file_name) ? 0 : 1;
+        if (isMissing !== file.is_missing) this.statements.setFileMissing.run(isMissing, file.id);
+      }
+    });
+  }
+
+  /**
+   * Flags one journal as no longer in the journal folder.
+   * @returns {boolean} whether it was newly flagged
+   */
+  markFileMissing(fileName) {
+    const fileRecord = this.statements.selectFileByName.get(fileName);
+    if (!fileRecord || fileRecord.is_missing) return false;
+    this.statements.setFileMissing.run(1, fileRecord.id);
+    return true;
+  }
+
+  /** Journals read before files had a fingerprint get one from their stored first entry. */
+  backfillHeaderHashes() {
+    const files = this.statements.selectFilesWithoutHeaderHash.all();
+    if (files.length === 0) return;
+    const codec = getEntryCodec(this.database);
+    runInTransaction(this.database, () => {
+      for (const file of files) {
+        const firstEntry = this.statements.selectFirstEntry.get(file.id);
+        if (firstEntry) this.statements.updateHeaderHash.run(hashHeaderLine(codec.decode(firstEntry.data)), file.id);
+      }
+    });
+  }
+
   /** Removes all stored entries for a file and returns it to an unassigned state. */
   resetFile(fileId) {
     runInTransaction(this.database, () => {
@@ -266,6 +359,40 @@ export class JournalIngester {
   getActiveFileNames() {
     return this.statements.selectActiveFileNames.all().map((file) => file.file_name);
   }
+}
+
+/**
+ * A fingerprint of a journal file's first entry, or null if it has no complete entry yet.
+ * @param {string} filePath
+ */
+async function readHeaderHash(filePath) {
+  const fileHandle = await open(filePath, 'r');
+  let buffer;
+  try {
+    buffer = Buffer.alloc(HEADER_READ_BYTES);
+    const { bytesRead } = await fileHandle.read(buffer, 0, HEADER_READ_BYTES, 0);
+    buffer = buffer.subarray(0, bytesRead);
+  } finally {
+    await fileHandle.close();
+  }
+  // The same rule as the reader: the first complete line that parses as a journal entry.
+  let position = 0;
+  for (;;) {
+    const newlineIndex = buffer.indexOf(0x0a, position);
+    if (newlineIndex === -1) return null;
+    const lineText = buffer.toString('utf8', position, newlineIndex).trim();
+    position = newlineIndex + 1;
+    if (!lineText) continue;
+    try {
+      if (typeof JSON.parse(lineText)?.event === 'string') return hashHeaderLine(lineText);
+    } catch {
+      // not an entry; keep looking
+    }
+  }
+}
+
+function hashHeaderLine(lineText) {
+  return createHash('sha1').update(lineText).digest('hex');
 }
 
 function getCommanderIdentity(journalEntry) {
@@ -338,6 +465,16 @@ function prepareStatements(database) {
       WHERE id = ?
     `),
     updateFileStatus: database.prepare('UPDATE journal_files SET status = ?, status_reason = ?, commander_id = ? WHERE id = ?'),
+    updateHeaderHash: database.prepare('UPDATE journal_files SET header_hash = ? WHERE id = ?'),
+    selectSameJournal: database.prepare(`
+      SELECT id, file_name FROM journal_files
+      WHERE header_hash = ? AND commander_id = ? AND id != ? AND status = 'ok'
+      ORDER BY id LIMIT 1
+    `),
+    selectFilesWithoutHeaderHash: database.prepare("SELECT id FROM journal_files WHERE header_hash IS NULL AND status = 'ok'"),
+    selectFirstEntry: database.prepare('SELECT data FROM journal_entries WHERE journal_file_id = ? ORDER BY line_number LIMIT 1'),
+    selectFileMissingFlags: database.prepare('SELECT id, file_name, is_missing FROM journal_files'),
+    setFileMissing: database.prepare('UPDATE journal_files SET is_missing = ?1, is_active = is_active * (1 - ?1) WHERE id = ?2'),
     updateFileProgress: database.prepare(`
       UPDATE journal_files SET
         bytes_read = :bytesRead,
@@ -384,7 +521,7 @@ function prepareStatements(database) {
     `),
     selectActiveCandidates: database.prepare(`
       SELECT id, commander_id, status, sort_key FROM journal_files
-      WHERE is_closed = 0 AND is_legacy = 0 AND status IN ('ok', 'pending') AND modified_ms >= ?
+      WHERE is_closed = 0 AND is_legacy = 0 AND is_missing = 0 AND status IN ('ok', 'pending') AND modified_ms >= ?
     `),
     selectStalePendingFiles: database.prepare("SELECT file_name FROM journal_files WHERE status = 'pending' AND modified_ms < ?"),
     clearActiveFlags: database.prepare('UPDATE journal_files SET is_active = 0 WHERE is_active = 1'),

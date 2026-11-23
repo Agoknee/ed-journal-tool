@@ -7,9 +7,12 @@ import { useListFilters, useTableState } from '../hooks/use-list-filters.js';
 import { Badge, LoadingState, Section, StatCard, StatGrid } from '../components/ui.jsx';
 import { useApi } from '../hooks/use-api.js';
 import { formatBytes, formatDateTime, formatNumber, formatRelativeTime } from '../format.js';
+import RawJournalLines from './journals/RawJournalLines.jsx';
 
 const JOURNAL_TOPICS = ['journals', 'stats'];
-const STATUS_TONES = { ok: 'live', pending: 'warning', corrupt: 'danger' };
+const STATUS_TONES = { ok: 'live', pending: 'warning', corrupt: 'danger', duplicate: 'warning' };
+const STATUS_LABELS = { ok: 'parsed', duplicate: 'copy' };
+const NOT_PARSED_REASONS = { pending: 'waiting for commander info' };
 
 const EXAMPLE_QUERIES = [
   { label: 'Events by Count', query: 'SELECT event, COUNT(*) AS count\nFROM journal_entries\nGROUP BY event\nORDER BY count DESC\nLIMIT 50;' },
@@ -57,9 +60,10 @@ function JournalSummarySection({ commanderFilter, onSelectFile }) {
             <StatGrid>
               <StatCard label="Journal files" value={formatNumber(summary.total_files)} detail={formatBytes(summary.total_bytes)} />
               <StatCard label="Active" value={formatNumber(summary.active_files)} tone={summary.active_files > 0 ? 'live' : undefined} />
-              <StatCard label="Parsed" value={formatNumber(summary.ok_files)} />
+              <StatCard label="Parsed" value={formatNumber(summary.ok_files)} detail={summary.missing_files ? `${formatNumber(summary.missing_files)} no longer in the folder` : null} />
               <StatCard label="Flagged / corrupt" value={formatNumber(summary.corrupt_files)} tone={summary.corrupt_files > 0 ? 'danger' : undefined} />
               <StatCard label="Pending" value={formatNumber(summary.pending_files)} detail="Waiting for commander info" />
+              {summary.duplicate_files > 0 && <StatCard label="Copies" value={formatNumber(summary.duplicate_files)} detail="Copies of journals already read; skipped" />}
               <StatCard label="Entries" value={formatNumber(summary.total_entries)} detail={summary.skipped_lines ? `${formatNumber(summary.skipped_lines)} unparseable lines skipped` : null} />
               <StatCard label="Date range" value={formatRelativeTime(summary.last_timestamp)} detail={`since ${formatDateTime(summary.first_timestamp)}`} />
             </StatGrid>
@@ -101,13 +105,15 @@ function JournalFilesSection({ commanderFilter, onSelectFile }) {
   const filesRequest = useApi('/api/journals', { ...filterParams, ...tableState.queryParams }, JOURNAL_TOPICS);
 
   return (
-    <Section title="Journal Files" description="Click a file to view its entries. Flagged files have no single commander and aren't parsed.">
+    <Section title="Journal Files" description="Click a file to view its entries. Flagged files have no single commander and aren't parsed; copies of journals already read are skipped.">
       <FilterBar filters={filters} updateFilter={updateFilter} searchPlaceholder="Search file name, commander or reason…">
         <select value={status} onChange={(changeEvent) => setStatus(changeEvent.target.value)}>
           <option value="">All Statuses</option>
           <option value="ok">Parsed</option>
           <option value="corrupt">Flagged / Corrupt</option>
           <option value="pending">Pending</option>
+          <option value="duplicate">Copies</option>
+          <option value="missing">No Longer in Folder</option>
         </select>
         <label className="checkbox">
           <input type="checkbox" checked={isActiveOnly} onChange={(changeEvent) => setIsActiveOnly(changeEvent.target.checked)} />
@@ -122,8 +128,18 @@ function JournalFilesSection({ commanderFilter, onSelectFile }) {
         pagination={filesRequest.data && { ...filesRequest.data, onOffsetChange: tableState.onOffsetChange }}
         onRowClick={onSelectFile}
         columns={[
-          { key: 'file_name', label: 'File', sortKey: 'file', render: (file) => <>{file.file_name} {file.is_active === 1 && <Badge tone="live">Active</Badge>}</> },
-          { key: 'status', label: 'Status', render: (file) => <Badge tone={STATUS_TONES[file.status]} title={file.status_reason ?? ''}>{file.status === 'ok' ? 'parsed' : file.status}</Badge> },
+          {
+            key: 'file_name',
+            label: 'File',
+            sortKey: 'file',
+            render: (file) => (
+              <>
+                {file.file_name} {file.is_active === 1 && <Badge tone="live">Active</Badge>}
+                {file.is_missing === 1 && <Badge title="No longer in the journal folder; its entries are kept">Removed</Badge>}
+              </>
+            ),
+          },
+          { key: 'status', label: 'Status', render: (file) => <Badge tone={STATUS_TONES[file.status]} title={file.status_reason ?? ''}>{STATUS_LABELS[file.status] ?? file.status}</Badge> },
           { key: 'commander_name', label: 'Commander', render: (file) => file.commander_name ?? <span className="muted">{file.status_reason}</span> },
           { key: 'entry_count', label: 'Entries', align: 'right', sortKey: 'entries' },
           { key: 'file_size', label: 'Size', align: 'right', sortKey: 'size', render: (file) => formatBytes(file.file_size) },
@@ -148,12 +164,25 @@ function JournalEntriesSection({ journalFile, onClose }) {
   const [eventFilter, setEventFilter] = useState('');
   const [expandedEntryId, setExpandedEntryId] = useState(null);
   const tableState = useTableState({ tableId: 'journals.entries', defaultSort: 'line', defaultOrder: 'desc', pageSize: 50, resetKey: `${journalFile.id}:${eventFilter}` });
-  const entriesRequest = useApi(`/api/journals/${journalFile.id}/entries`, { event: eventFilter, ...tableState.queryParams }, JOURNAL_TOPICS);
+  const isParsed = journalFile.status === 'ok';
+  const entriesRequest = useApi(isParsed ? `/api/journals/${journalFile.id}/entries` : null, { event: eventFilter, ...tableState.queryParams }, JOURNAL_TOPICS);
+
+  if (!isParsed) {
+    return (
+      <Section
+        title={journalFile.file_name}
+        description={`Not parsed: ${journalFile.status_reason ?? NOT_PARSED_REASONS[journalFile.status] ?? journalFile.status}. Showing the file as it is in the journal folder.`}
+        actions={<button type="button" onClick={onClose}>Close</button>}
+      >
+        <RawJournalLines key={journalFile.id} journalFile={journalFile} />
+      </Section>
+    );
+  }
 
   return (
     <Section
       title={journalFile.file_name}
-      description={journalFile.status === 'ok' ? `CMDR ${journalFile.commander_name}` : `Not parsed: ${journalFile.status_reason ?? journalFile.status}`}
+      description={`CMDR ${journalFile.commander_name}`}
       actions={<button type="button" onClick={onClose}>Close</button>}
     >
       <div className="filter-bar">
@@ -169,7 +198,7 @@ function JournalEntriesSection({ journalFile, onClose }) {
         isLoading={entriesRequest.isLoading}
         rows={entriesRequest.data?.rows ?? []}
         pagination={entriesRequest.data && { ...entriesRequest.data, onOffsetChange: tableState.onOffsetChange }}
-        emptyMessage={journalFile.status === 'ok' ? 'No entries.' : 'Entries from flagged files are not stored.'}
+        emptyMessage="No entries."
         onRowClick={(entry) => setExpandedEntryId(expandedEntryId === entry.id ? null : entry.id)}
         columns={[
           { key: 'line_number', label: 'Line', align: 'right' },
@@ -305,7 +334,7 @@ function StatModulesSection() {
           <DataTable
             tableId="journals.statModules"
             rowKey="name"
-            rows={modules}
+            rows={[...modules].sort((first, second) => first.title.localeCompare(second.title))}
             columns={[
               { key: 'title', label: 'Module', render: (statModule) => <><strong>{statModule.title}</strong><div className="muted small">{statModule.description}</div></> },
               { key: 'events', label: 'Events', render: (statModule) => <span className="muted small">{statModule.events.join(', ')}</span> },

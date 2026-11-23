@@ -61,7 +61,13 @@ export async function createFixture() {
 
     /** Ingests every journal file and builds the stats. */
     async build() {
-      for (const fileName of await ingester.listJournalFileNames()) await ingester.processFile(fileName);
+      // As the journal monitor does.
+      let needsStatsRebuild = false;
+      for (const fileName of await ingester.listJournalFileNames()) {
+        if ((await ingester.processFile(fileName)).requiresStatsRebuild) needsStatsRebuild = true;
+      }
+      if (ingester.restoreEntryOrderIfNeeded()) needsStatsRebuild = true;
+      if (needsStatsRebuild) statsEngine.resetAllModules();
       await statsEngine.processNewEntries();
     },
 

@@ -17,7 +17,7 @@ export const coreSchemaSql = `
     file_name           TEXT NOT NULL UNIQUE,
     sort_key            TEXT NOT NULL,          -- chronological key derived from the file name
     commander_id        INTEGER REFERENCES commanders(id),
-    status              TEXT NOT NULL DEFAULT 'pending',  -- ok | pending | corrupt
+    status              TEXT NOT NULL DEFAULT 'pending',  -- ok | pending | corrupt | duplicate (a copy of another journal)
     status_reason       TEXT,
     file_size           INTEGER NOT NULL DEFAULT 0,
     modified_ms         INTEGER NOT NULL DEFAULT 0,
@@ -34,6 +34,8 @@ export const coreSchemaSql = `
     is_legacy           INTEGER NOT NULL DEFAULT 0,  -- written by the Legacy (3.x) game client
     is_closed           INTEGER NOT NULL DEFAULT 0,  -- ended with Shutdown/Continued
     is_active           INTEGER NOT NULL DEFAULT 0,
+    is_missing          INTEGER NOT NULL DEFAULT 0,  -- no longer in the journal folder (entries are kept)
+    header_hash         TEXT,                        -- fingerprint of the first entry, which identifies the journal
     created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   );
