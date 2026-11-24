@@ -43,7 +43,7 @@ Then open http://localhost:4267.
 
 ### Releases
 
-`master` only changes through pull requests, which have to pass the checks in `.github/workflows/checks.yml`:
+`main` only changes through pull requests, which have to pass the checks in `.github/workflows/checks.yml`:
 
 - the version in `package.json` is higher than the last release's (raise it with `npm version patch`, `minor` or `major`), unless the pull request is labelled `no-release`;
 - lint, and the tests on Windows and Linux;
@@ -51,13 +51,13 @@ Then open http://localhost:4267.
 
 Any branch can be built by hand: Actions → Build → Run workflow, choosing the branch. Its version has the commit added (`0.2.0+abc1234`, in the file names and in the app), so it can't be mistaken for a release; untick "Add the commit to the version" to build with the plain version.
 
-Each merge into `master` not labelled `no-release` is released by `.github/workflows/release.yml`, as a **draft**: the executables, their checksums and a [provenance attestation](https://docs.github.com/actions/security-for-github-actions/using-artifact-attestations), with the commits since the last release. Publish the draft on the Releases page; that creates the `v<version>` tag. Until then, a later merge with the same version replaces the draft. A version with a suffix (`1.2.0-beta.1`) is marked as a prerelease. Anyone can check a download was built by this workflow with `gh attestation verify <file> --repo <owner>/ed-journal-tool`.
+Each merge into `main` not labelled `no-release` is released by `.github/workflows/release.yml`, as a **draft**: the executables, their checksums and a [provenance attestation](https://docs.github.com/actions/security-for-github-actions/using-artifact-attestations), with the commits since the last release. Publish the draft on the Releases page; that creates the `v<version>` tag. Until then, a later merge with the same version replaces the draft. A version with a suffix (`1.2.0-beta.1`) is marked as a prerelease. Anyone can check a download was built by this workflow with `gh attestation verify <file> --repo <owner>/ed-journal-tool`.
 
 Dependabot (`.github/dependabot.yml`) opens weekly pull requests for package and action updates, labelled `no-release`. The workflows' actions are pinned to commits, which Dependabot moves along.
 
 Setting up the repository, once:
 
-1. Import the branch rules, `.github/rulesets/master.json`: Settings → Rules → Rulesets → New ruleset → Import a ruleset.
+1. Import the branch rules, `.github/rulesets/main.json`: Settings → Rules → Rulesets → New ruleset → Import a ruleset.
 2. Create the labels: `gh label create no-release --description "Merged without a release" --color cccccc` (`dependencies` too, if it isn't there).
 3. Settings → Actions → General: tick "Require actions to be pinned to a full-length commit SHA", so an unpinned action can't be added.
 

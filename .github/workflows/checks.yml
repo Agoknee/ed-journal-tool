@@ -1,11 +1,11 @@
-# The checks a pull request into master has to pass (the master ruleset requires "Checks passed").
+# The checks a pull request into main has to pass (the main ruleset requires "Checks passed").
 # A pull request labelled "no-release" (documentation, CI, dependency updates) needn't raise the
 # version, and isn't released when merged.
 name: Checks
 
 on:
   pull_request:
-    branches: [master]
+    branches: [main]
     types: [opened, synchronize, reopened, labeled, unlabeled]
   workflow_dispatch:
 

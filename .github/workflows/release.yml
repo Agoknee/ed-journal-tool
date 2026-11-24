@@ -1,16 +1,16 @@
-# Each pull request merged into master is released, unless it's labelled "no-release": the
+# Each pull request merged into main is released, unless it's labelled "no-release": the
 # executables are built and tried (build.yml), their provenance is attested, and they're attached
 # to a draft "v<version>" release listing the changes since the last one. Publish the draft on the
 # repository's Releases page; that creates the tag.
 #
 # Until then, a later merge with the same version replaces the draft with a new build. A version
-# already published is never touched. Run by hand (Actions → Release → Run workflow, on master),
+# already published is never touched. Run by hand (Actions → Release → Run workflow, on main),
 # it releases whatever the version is, labels aside.
 name: Release
 
 on:
   push:
-    branches: [master]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -23,7 +23,7 @@ concurrency:
 jobs:
   plan:
     name: Plan
-    if: github.ref == 'refs/heads/master'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
