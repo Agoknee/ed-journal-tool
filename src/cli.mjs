@@ -1,15 +1,12 @@
 import { readFileSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
+import { dataDirectoryPath } from './data-paths.mjs';
 
 /** In the standalone executable, this is the read-only bundled copy holding package.json and client/dist. */
 const projectRootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-
-/** App data lives in %LOCALAPPDATA%edjt (~/.local/share/edjt where LOCALAPPDATA isn't set, e.g. Linux). */
-const dataDirectoryPath = path.join(process.env.LOCALAPPDATA ?? path.join(os.homedir(), '.local', 'share'), 'edjt');
 
 const { version: appVersion } = JSON.parse(readFileSync(path.join(projectRootPath, 'package.json'), 'utf8'));
 

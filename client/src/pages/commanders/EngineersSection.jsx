@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { getEngineerImageUrl } from '../../components/inara-images.js';
+import { getEngineerImageUrl, hideMissingImage } from '../../components/inara-images.js';
 import { Badge, LoadingState, Section, StatCard, StatGrid, Tabs } from '../../components/ui.jsx';
 import { useApi } from '../../hooks/use-api.js';
 import { formatDateTime, formatNumber, formatSystemName } from '../../format.js';
@@ -67,7 +67,7 @@ function EngineerCard({ engineer }) {
     <article className={`card engineer-card ${isUnlocked ? '' : 'engineer-card-locked'}`}>
       <header className="card-header">
         <div className="engineer-identity">
-          {engineer.imageId && <img className="engineer-portrait" src={getEngineerImageUrl(engineer.imageId)} alt="" width={56} height={56} />}
+          {engineer.imageId && <img className="engineer-portrait" src={getEngineerImageUrl(engineer.imageId)} alt="" width={56} height={56} onError={hideMissingImage} />}
           <div>
             <h3>{engineer.engineer}</h3>
             <div className="muted small">{engineer.system ? formatSystemName(engineer.system) : 'Location unknown'}{engineer.isOnFoot ? ' · on foot' : ''}</div>

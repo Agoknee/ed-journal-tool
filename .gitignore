@@ -5,3 +5,7 @@ data/
 *.db-shm
 build/
 dist/
+
+# Inara artwork: not ours to redistribute, so never kept in the repository. EDJT downloads it into its
+# data folder on first run (src/assets/inara-assets.mjs); this keeps an old local copy from being added.
+client/public/inara/

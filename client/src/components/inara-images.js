@@ -1,4 +1,5 @@
-// The game's insignia artwork (from Inara), stored in public/inara. Pilots' Federation ranks have an
+// The game's insignia artwork (from Inara), downloaded into the data folder the first time EDJT runs
+// and served at /inara (src/assets/inara-assets.mjs; it isn't in the repository). Pilots' Federation ranks have an
 // image per rank (index 0-13, Elite I-V included); each navy has one emblem; powers have a portrait.
 const INARA_IMAGE_BASE = `${import.meta.env.BASE_URL}inara`;
 const INARA_RANK_TYPES = { Combat: 1, Trade: 2, Explore: 3, CQC: 4, Soldier: 5, Exobiologist: 6 };
@@ -29,4 +30,9 @@ export function getPowerImageUrl(power) {
 /** An engineer's portrait by its image id (from the engineers API), or null. */
 export function getEngineerImageUrl(imageId) {
   return imageId ? `${INARA_IMAGE_BASE}/engineers/${imageId}.jpg` : null;
+}
+
+/** Hides an image whose file isn't there (not downloaded yet), rather than showing a broken one. */
+export function hideMissingImage(errorEvent) {
+  errorEvent.currentTarget.style.visibility = 'hidden';
 }

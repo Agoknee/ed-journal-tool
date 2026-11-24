@@ -19,8 +19,9 @@ import { createSqlRoutes } from './routes/sql-routes.mjs';
  * @param {import('../journals/status-monitor.mjs').StatusMonitor} options.statusMonitor
  * @param {import('../events/event-hub.mjs').EventHub} options.eventHub
  * @param {string[]} options.journalDirectories
+ * @param {string} [options.inaraAssetDirectory]  where the downloaded Inara artwork is, served at /inara
  */
-export function createServer({ database, databasePath, statsEngine, journalMonitor, clockMonitor, statusMonitor, eventHub, journalDirectories }) {
+export function createServer({ database, databasePath, statsEngine, journalMonitor, clockMonitor, statusMonitor, eventHub, journalDirectories, inaraAssetDirectory }) {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '1mb' }));
@@ -86,6 +87,13 @@ export function createServer({ database, databasePath, statsEngine, journalMonit
   });
 
   app.use('/api', apiRouter);
+
+  // The Inara artwork, downloaded into the data folder on first run (assets/inara-assets.mjs). A
+  // file that isn't there (yet) is a plain 404, so the dashboard hides that picture; it never falls
+  // through to the dashboard's own pages.
+  if (inaraAssetDirectory) {
+    app.use('/inara', express.static(inaraAssetDirectory, { maxAge: '1d', index: false }), (request, response) => response.status(404).end());
+  }
   return app;
 }
 

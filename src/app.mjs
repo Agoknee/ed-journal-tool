@@ -1,11 +1,13 @@
 import { existsSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import { ensureInaraAssets } from './assets/inara-assets.mjs';
 import { appVersion, parseCommandLineOptions, projectRootPath } from './cli.mjs';
 import { TickMonitor } from './bgs-ticks.mjs';
 import { ClockMonitor } from './clock-check.mjs';
 import { openDatabase } from './database/database.mjs';
 import { compactJournalEntries, vacuumIfDue } from './database/entry-compression.mjs';
+import { inaraAssetDirectory } from './data-paths.mjs';
 import { EventHub } from './events/event-hub.mjs';
 import { JournalIngester } from './journals/journal-ingester.mjs';
 import { JournalMonitor } from './journals/journal-monitor.mjs';
@@ -62,6 +64,7 @@ export async function startApp() {
     statusMonitor,
     eventHub,
     journalDirectories: ingester.journalDirectories,
+    inaraAssetDirectory,
   });
 
   const httpServer = http.createServer(app);
@@ -89,6 +92,10 @@ export async function startApp() {
 
   clockMonitor.start();
   tickMonitor.start();
+  // The rank, Powerplay and engineer images: downloaded the first time (and whenever some are
+  // missing), in the background so it doesn't hold up reading the journals.
+  ensureInaraAssets({ directory: inaraAssetDirectory, log: logger })
+    .catch((error) => logger.warn(`Couldn't download the Inara images: ${error.message}`));
   await journalMonitor.scanJournalDirectory();
   // A new database gets its compression dictionary once the first scan has stored enough entries.
   await compactJournalEntries(database);
