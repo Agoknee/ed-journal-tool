@@ -87,11 +87,10 @@ Then open http://localhost:4267.
 
 ### Releases
 
-`main` only changes through pull requests, which have to pass the checks in `.github/workflows/checks.yml`:
+`main` only changes through pull requests, which have to pass two required checks:
 
-- the version in `package.json` is higher than the last release's (raise it with `npm version patch`, `minor` or `major`), unless the pull request is labelled `no-release`;
-- lint, and the tests on Windows and Linux;
-- the build (`.github/workflows/build.yml`): `npm run dist`, then each executable is started and its API and dashboard checked (`scripts/smoke-test.mjs`), the Linux one also through its installer, and the Windows one on Windows. The files can be downloaded from the run's Artifacts.
+- **Version raised** (`.github/workflows/version.yml`): the version in `package.json` is higher than the last release's (raise it with `npm version patch`, `minor` or `major`), unless the pull request is labelled `no-release`. It's the only check that runs again when labels change.
+- **Checks passed** (`.github/workflows/checks.yml`): lint, the tests on Windows and Linux, and the build (`.github/workflows/build.yml`): `npm run dist`, then each executable is started and its API and dashboard checked (`scripts/smoke-test.mjs`), the Linux one also through its installer, and the Windows one on Windows. The files can be downloaded from the run's Artifacts.
 
 Any branch can be built by hand: Actions → Build → Run workflow, choosing the branch. Its version has the commit added (`0.2.0+abc1234`, in the file names and in the app), so it can't be mistaken for a release; untick "Add the commit to the version" to build with the plain version.
 
@@ -101,7 +100,7 @@ Dependabot (`.github/dependabot.yml`) opens weekly pull requests for package and
 
 Setting up the repository, once:
 
-1. Import the branch rules, `.github/rulesets/main.json`: Settings → Rules → Rulesets → New ruleset → Import a ruleset.
+1. Import the branch rules, `.github/rulesets/main.json`: Settings → Rules → Rulesets → New ruleset → Import a ruleset. (It requires both "Checks passed" and "Version raised".)
 2. Create the labels: `gh label create no-release --description "Merged without a release" --color cccccc` (`dependencies` too, if it isn't there).
 3. Settings → Actions → General: tick "Require actions to be pinned to a full-length commit SHA", so an unpinned action can't be added.
 
