@@ -1,0 +1,3 @@
+# Commits that only reformat (git blame skips them with blame.ignoreRevsFile).
+# Normalize line endings to LF
+636745919f6d455a0bae4c9ea3fcd1bb720614bb

@@ -4,15 +4,17 @@
  *
  * - dist/ed-journal-tool-<version>.exe: built from a copy of the Node.js binary whose icon and
  *   version details are replaced, so Windows shows "ED Journal Tool" and the app version.
- * - dist/ed-journal-tool-<version> (Linux), plus ed-journal-tool.desktop and ed-journal-tool.png
- *   for a desktop menu entry.
+ * - dist/ed-journal-tool-<version> (Linux), and dist/ed-journal-tool-<version>-linux-x64-install.sh:
+ *   a self-extracting installer holding it, which installs it for the user with its icon and a menu
+ *   entry (see linux-installer.mjs).
  */
-import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { exec as runPkg } from '@yao-pkg/pkg';
 import { need as fetchNodeBinary } from '@yao-pkg/pkg-fetch';
 import * as ResEdit from 'resedit';
+import { writeLinuxInstaller } from './linux-installer.mjs';
 
 const APP_NAME = 'ED Journal Tool';
 const APP_ID = 'ed-journal-tool';
@@ -34,8 +36,19 @@ for (const target of packageJson.pkg.targets) {
   if (platform === 'win') {
     await packageWindowsExecutable({ target, nodeRange, platform, arch });
   } else {
-    await packageExecutable(target, path.join(distDirectoryPath, executableBaseName));
-    if (platform === 'linux') writeLinuxDesktopEntry(executableBaseName);
+    const executablePath = path.join(distDirectoryPath, executableBaseName);
+    await packageExecutable(target, executablePath);
+    if (platform === 'linux') {
+      writeLinuxInstaller({
+        outputPath: path.join(distDirectoryPath, `${executableBaseName}-linux-${arch}-install.sh`),
+        binaryPath: executablePath,
+        iconPath: path.join(packagingAssetsPath, `${APP_ID}.png`),
+        appId: APP_ID,
+        appName: APP_NAME,
+        appVersion,
+        appDescription,
+      });
+    }
   }
 }
 
@@ -97,25 +110,3 @@ function writeCustomizedWindowsBinary(sourcePath, outputPath) {
   writeFileSync(outputPath, Buffer.from(executable.generate()));
 }
 
-/**
- * Writes a freedesktop.org menu entry and its icon next to the Linux executable. They expect the usual
- * per-user install: the executable on PATH (e.g. ~/.local/bin), the icon in
- * ~/.local/share/icons/hicolor/512x512/apps and the entry in ~/.local/share/applications.
- */
-function writeLinuxDesktopEntry(executableName) {
-  copyFileSync(path.join(packagingAssetsPath, `${APP_ID}.png`), path.join(distDirectoryPath, `${APP_ID}.png`));
-  const desktopEntryLines = [
-    '[Desktop Entry]',
-    'Type=Application',
-    `Name=${APP_NAME}`,
-    `Comment=${appDescription}`,
-    `Exec=${executableName}`,
-    `Icon=${APP_ID}`,
-    // The app is a console server; the terminal shows its log and closing it stops the server.
-    'Terminal=true',
-    'Categories=Game;Utility;',
-    `X-AppVersion=${appVersion}`,
-    '',
-  ];
-  writeFileSync(path.join(distDirectoryPath, `${APP_ID}.desktop`), desktopEntryLines.join('\n'));
-}
