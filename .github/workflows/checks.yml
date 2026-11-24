@@ -1,39 +1,23 @@
-# The checks a pull request into main has to pass (the main ruleset requires "Checks passed").
-# A pull request labelled "no-release" (documentation, CI, dependency updates) needn't raise the
-# version, and isn't released when merged.
+# The lint, tests and build a pull request into main has to pass (the main ruleset requires
+# "Checks passed"). The version check is version.yml, the only check labels change, so this isn't
+# run again when a label is added or removed.
 name: Checks
 
 on:
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# A push to the pull request cancels the run for the commit before it.
 concurrency:
   group: checks-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  version:
-    name: Version raised
-    runs-on: ubuntu-latest
-    steps:
-      - if: contains(github.event.pull_request.labels.*.name, 'no-release')
-        run: echo "::notice::Labelled no-release, so the version needn't change."
-      - if: ${{ !contains(github.event.pull_request.labels.*.name, 'no-release') }}
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0 # the release tags
-      - if: ${{ !contains(github.event.pull_request.labels.*.name, 'no-release') }}
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: .nvmrc
-      - if: ${{ !contains(github.event.pull_request.labels.*.name, 'no-release') }}
-        run: node scripts/check-version.mjs
-
   lint:
     name: Lint
     runs-on: ubuntu-latest
@@ -61,7 +45,7 @@ jobs:
   checks-passed:
     name: Checks passed
     if: always()
-    needs: [version, lint, test, build]
+    needs: [lint, test, build]
     runs-on: ubuntu-latest
     steps:
       - name: Every check passed
