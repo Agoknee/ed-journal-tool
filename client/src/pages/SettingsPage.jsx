@@ -39,16 +39,13 @@ const MIN_PASSWORD_LENGTH = 8;
 function PasswordSection({ hasPassword, isLocal, onChanged }) {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
-  const [confirmation, setConfirmation] = useState('');
   const [message, setMessage] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
   // From another device, changing or removing the password needs the current one.
   const needsCurrent = hasPassword && !isLocal;
 
-  const problem = newPassword.length > 0 && newPassword.length < MIN_PASSWORD_LENGTH
-    ? `At least ${MIN_PASSWORD_LENGTH} characters.`
-    : confirmation.length > 0 && confirmation !== newPassword ? 'The passwords don’t match.' : null;
-  const canSave = newPassword.length >= MIN_PASSWORD_LENGTH && confirmation === newPassword && (!needsCurrent || currentPassword) && !isSaving;
+  const problem = newPassword.length > 0 && newPassword.length < MIN_PASSWORD_LENGTH ? `At least ${MIN_PASSWORD_LENGTH} characters.` : null;
+  const canSave = newPassword.length >= MIN_PASSWORD_LENGTH && (!needsCurrent || currentPassword) && !isSaving;
 
   async function run(action, successText) {
     setIsSaving(true);
@@ -57,7 +54,6 @@ function PasswordSection({ hasPassword, isLocal, onChanged }) {
       await action();
       setCurrentPassword('');
       setNewPassword('');
-      setConfirmation('');
       setMessage({ tone: 'info', text: successText });
       await onChanged();
     } catch (error) {
@@ -106,10 +102,6 @@ function PasswordSection({ hasPassword, isLocal, onChanged }) {
         <label>
           <span>{hasPassword ? 'New password' : 'Password'}</span>
           <input type="password" autoComplete="new-password" value={newPassword} onChange={(changeEvent) => setNewPassword(changeEvent.target.value)} />
-        </label>
-        <label>
-          <span>Confirm</span>
-          <input type="password" autoComplete="new-password" value={confirmation} onChange={(changeEvent) => setConfirmation(changeEvent.target.value)} />
         </label>
         {problem && <div className="muted small">{problem}</div>}
         {message && <div className={`notice notice-${message.tone}`}>{message.text}</div>}
