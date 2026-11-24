@@ -1,0 +1,70 @@
+# The checks a pull request into master has to pass (the master ruleset requires "Checks passed").
+# A pull request labelled "no-release" (documentation, CI, dependency updates) needn't raise the
+# version, and isn't released when merged.
+name: Checks
+
+on:
+  pull_request:
+    branches: [master]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  version:
+    name: Version raised
+    runs-on: ubuntu-latest
+    steps:
+      - if: contains(github.event.pull_request.labels.*.name, 'no-release')
+        run: echo "::notice::Labelled no-release, so the version needn't change."
+      - if: ${{ !contains(github.event.pull_request.labels.*.name, 'no-release') }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the release tags
+      - if: ${{ !contains(github.event.pull_request.labels.*.name, 'no-release') }}
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - if: ${{ !contains(github.event.pull_request.labels.*.name, 'no-release') }}
+        run: node scripts/check-version.mjs
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+      - run: npm run lint
+
+  test:
+    name: Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup
+      - run: npm test
+
+  build:
+    name: Build
+    uses: ./.github/workflows/build.yml
+
+  checks-passed:
+    name: Checks passed
+    if: always()
+    needs: [version, lint, test, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every check passed
+        run: |
+          echo 'Results: ${{ toJSON(needs.*.result) }}'
+          test '${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped') }}' = 'false'

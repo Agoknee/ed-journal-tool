@@ -1,0 +1,38 @@
+# Weekly pull requests updating the server's and the client's packages and the workflows' actions
+# (whose pinned commits it moves to the new release, comment included). Minor and patch updates
+# come together, one pull request per folder; major updates each on their own.
+#
+# They're labelled no-release, so they needn't raise the version and aren't released by themselves:
+# the next release includes them. The labels have to exist in the repository first (see README).
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    labels: [dependencies, no-release]
+    groups:
+      server:
+        patterns: ['*']
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /client
+    schedule:
+      interval: weekly
+    labels: [dependencies, no-release]
+    groups:
+      client:
+        patterns: ['*']
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/setup
+    schedule:
+      interval: weekly
+    labels: [dependencies, no-release]
+    groups:
+      actions:
+        patterns: ['*']
