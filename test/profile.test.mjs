@@ -76,3 +76,25 @@ test('commanders, reputation and engineers from one session', async () => {
     await fixture.close();
   }
 });
+
+test('commanders: when each rank was reached, exactly for a promotion and "at least" otherwise', async () => {
+  const fixture = await createFixture();
+  try {
+    const at = (day, time = '10:00:00') => `2026-03-${String(day).padStart(2, '0')}T${time}Z`;
+    const ranks = (values, time) => event('Rank', { Combat: 3, Trade: 5, Explore: 2, Soldier: 0, Exobiologist: 0, Empire: 0, Federation: 0, CQC: 0, ...values }, time);
+    fixture.writeJournal([...sessionStart({ at: at(1) }), ranks({}, at(1))]);
+    // A later login with the same ranks changes nothing; a promotion is exact.
+    fixture.writeJournal([...sessionStart({ at: at(5) }), ranks({}, at(5)), event('Promotion', { Combat: 4 }, at(5, '11:30:00'))]);
+    // Next login: Combat as promoted; Trade went up while no journal was kept.
+    fixture.writeJournal([...sessionStart({ at: at(9) }), ranks({ Combat: 4, Trade: 6 }, at(9))]);
+    await fixture.build();
+
+    const [profile] = (await fixture.get(`/api/stats/commanders?commander=${fixture.commanderId()}`)).body.commanders;
+    assert.deepEqual(profile.ranks, { Combat: 4, Trade: 6, Explore: 2, Soldier: 0, Exobiologist: 0, Empire: 0, Federation: 0, CQC: 0 });
+    assert.deepEqual(profile.rank_since.Combat, { at: at(5, '11:30:00'), isExact: true });
+    assert.deepEqual(profile.rank_since.Trade, { at: at(9), isExact: false });
+    assert.deepEqual(profile.rank_since.Explore, { at: at(1), isExact: false }, 'first seen: held since at least then');
+  } finally {
+    await fixture.close();
+  }
+});

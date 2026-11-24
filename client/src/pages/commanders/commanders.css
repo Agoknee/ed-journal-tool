@@ -148,3 +148,7 @@
   .loadout-engineering { grid-column: 3 / -1; grid-row: 2; }
   .loadout-engineering-none { display: none; }
 }
+/* Commander cards: small rank insignia with the rank's type very small above its name. */
+.rank-mini { display: inline-flex; align-items: center; gap: 5px; font-size: 0.8rem; }
+.rank-mini-text { display: flex; flex-direction: column; line-height: 1.15; }
+.rank-mini-type { color: var(--color-text-muted); font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.05em; }

@@ -6,7 +6,7 @@ import { Badge, LoadingState, Section, StatCard, StatGrid } from '../../componen
 import { useApi, useDebouncedValue } from '../../hooks/use-api.js';
 import { useTableState } from '../../hooks/use-list-filters.js';
 import { useElementSize } from '../../hooks/use-element-size.js';
-import { formatDateTime, formatNumber, formatSystemName } from '../../format.js';
+import { formatDateTime, formatNumber, formatRankTitle, formatSystemName } from '../../format.js';
 
 const PILOT_RANKS = [
   { key: 'Combat', label: 'Combat' },
@@ -88,7 +88,7 @@ function RankCard({ rank, profile }) {
   const nextName = profile.next_rank_names?.[rank.key];
   return (
     <div className="rank-card">
-      <RankIcon size={52} title={`${rank.label}: ${profile.rank_names?.[rank.key]}`} imageUrl={getRankImageUrl(rank.key, rankIndex)} />
+      <RankIcon size={52} title={formatRankTitle(rank.label, profile.rank_names?.[rank.key], profile.rank_since?.[rank.key])} imageUrl={getRankImageUrl(rank.key, rankIndex)} />
       <div className="rank-card-body">
         <div className="rank-card-label">{rank.label}</div>
         <div className="rank-card-name">{profile.rank_names?.[rank.key] ?? '—'}</div>

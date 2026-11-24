@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import CopyableText from '../components/CopyableText.jsx';
+import { getRankImageUrl } from '../components/inara-images.js';
+import RankIcon from '../components/RankIcon.jsx';
 import { Badge, KeyValueList, LoadingState, Section, StatGrid, StatGroupCard } from '../components/ui.jsx';
 import { useApi } from '../hooks/use-api.js';
 import { STORED_ID, useStoredState } from '../hooks/use-stored-state.js';
 import {
-  formatCredits, formatDuration, formatNumber, formatRelativeTime, formatShipName,
+  formatCredits, formatDuration, formatNumber, formatRankTitle, formatRelativeTime, formatShipName,
   formatSystemName,
 } from '../format.js';
 import CreditsSection from './commanders/CreditsSection.jsx';
@@ -15,11 +17,21 @@ import RanksSection from './commanders/RanksSection.jsx';
 import ShipRouteButtons from './commanders/ShipRouteButtons.jsx';
 import './commanders/commanders.css';
 
+// The ranks on each commander card, as small insignia with the rank name and type, in rows: the
+// three main ranks, then the Odyssey ones, then the two navies (shorter rows are centred).
+const CARD_RANK_ROWS = [
+  [{ key: 'Combat', label: 'Combat' }, { key: 'Trade', label: 'Trade' }, { key: 'Explore', label: 'Exploration' }],
+  [{ key: 'Exobiologist', label: 'Exobiology' }, { key: 'Soldier', label: 'Mercenary' }],
+  [{ key: 'Federation', label: 'Federal Navy' }, { key: 'Empire', label: 'Imperial Navy' }],
+];
+
 const DETAIL_COMMANDER_STORAGE_KEY = 'commanders.detailCommander';
 
 export default function CommandersPage({ commanderFilter }) {
   const commanderParams = { commander: commanderFilter };
-  const profilesRequest = useApi('/api/stats/commanders', commanderParams);
+  // Also refreshed when the active journals change, so "Online" clears when the game closes (the
+  // Commanders stats don't change then, so their own updates wouldn't).
+  const profilesRequest = useApi('/api/stats/commanders', commanderParams, ['stats', 'journals']);
   const locationsRequest = useApi('/api/stats/travel/locations', commanderParams);
 
   const locationsByCommander = indexBy(locationsRequest.data?.locations, 'commander_id');
@@ -139,7 +151,7 @@ function CommanderCard({ profile, location, onShowShip, onShowCredits }) {
   const ranks = profile.rank_names ?? {};
   const isOnline = profile.active_journal_count > 0;
   return (
-    <article className="card">
+    <article className="card commander-card">
       <header className="card-header">
         <div>
           <h3><CopyableText copyText={profile.name}>CMDR {profile.name}</CopyableText></h3>
@@ -194,8 +206,18 @@ function CommanderCard({ profile, location, onShowShip, onShowCredits }) {
       ]} />
       {Object.keys(ranks).length > 0 && (
         <div className="rank-list">
-          {['Combat', 'Trade', 'Explore', 'Exobiologist', 'Soldier', 'Federation', 'Empire'].filter((rankType) => ranks[rankType]).map((rankType) => (
-            <span key={rankType} className="rank-chip"><span className="muted">{rankType}</span> {ranks[rankType]}</span>
+          {CARD_RANK_ROWS.map((row) => row.filter((rank) => ranks[rank.key])).filter((row) => row.length > 0).map((row) => (
+            <div key={row[0].key} className="rank-row">
+              {row.map((rank) => (
+                <span key={rank.key} className="rank-mini" title={formatRankTitle(rank.label, ranks[rank.key], profile.rank_since?.[rank.key])}>
+                  <RankIcon size={22} imageUrl={getRankImageUrl(rank.key, profile.ranks?.[rank.key])} />
+                  <span className="rank-mini-text">
+                    <span className="rank-mini-type">{rank.label}</span>
+                    <span>{ranks[rank.key]}</span>
+                  </span>
+                </span>
+              ))}
+            </div>
           ))}
         </div>
       )}

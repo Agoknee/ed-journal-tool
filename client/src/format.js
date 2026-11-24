@@ -35,6 +35,25 @@ export function formatDateTime(timestamp) {
   return Number.isNaN(parsedDate.getTime()) ? String(timestamp) : dateTimeFormatter.format(parsedDate);
 }
 
+/**
+ * How long a rank has been held, for its tooltip: "since 12 days ago", or "since at least 400 days
+ * ago" when the journals only show it was held by then (first seen, or changed between sessions).
+ * @param {{ at: string, isExact: boolean } | undefined} rankSince
+ */
+export function formatRankSince(rankSince) {
+  const sinceMs = Date.parse(rankSince?.at ?? '');
+  if (!Number.isFinite(sinceMs)) return null;
+  const days = Math.max(0, Math.floor((Date.now() - sinceMs) / 86_400_000));
+  const ago = days === 0 ? 'today' : `${integerFormatter.format(days)} ${days === 1 ? 'day' : 'days'} ago`;
+  return `since ${rankSince.isExact ? '' : 'at least '}${ago}`;
+}
+
+/** A rank's tooltip: "Combat: Deadly · since 12 days ago". */
+export function formatRankTitle(label, rankName, rankSince) {
+  const since = formatRankSince(rankSince);
+  return `${label}: ${rankName ?? '—'}${since ? ` · ${since}` : ''}`;
+}
+
 export function formatRelativeTime(timestamp) {
   if (!timestamp) return '—';
   const elapsedSeconds = Math.round((Date.now() - new Date(timestamp).getTime()) / 1000);

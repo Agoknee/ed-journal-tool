@@ -179,8 +179,16 @@ button.last-tick:hover { border-color: var(--color-border); }
 .key-value-row dt { color: var(--color-text-muted); }
 .key-value-row dd { margin: 0; overflow-wrap: anywhere; }
 
-.rank-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
-.rank-chip { font-size: 0.8rem; padding: 2px 8px; border-radius: 999px; background: var(--color-surface); border: 1px solid var(--color-border); }
+/* Commander card ranks: rows of up to three, each rank a third of the card wide, so a shorter row
+   (the Odyssey ranks, the navies) sits centred under the full one. */
+.rank-list { display: grid; gap: 10px; margin-top: 14px; }
+/* The cards in a row are as tall as the tallest; the ranks sit at the bottom of each, the spare
+   space above them, so they line up across the row. */
+.commander-card { display: flex; flex-direction: column; }
+.commander-card .rank-list { margin-top: auto; padding-top: 14px; }
+.rank-row { display: flex; justify-content: center; gap: 12px; }
+.rank-row .rank-mini { flex: 0 0 calc((100% - 24px) / 3); min-width: 0; }
+.rank-row .rank-mini img { flex: none; }
 
 .carrier-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-bottom: 12px; }
 .meter-row { display: grid; grid-template-columns: 50px 1fr auto; gap: 10px; align-items: center; margin: 6px 0; font-size: 0.85rem; }

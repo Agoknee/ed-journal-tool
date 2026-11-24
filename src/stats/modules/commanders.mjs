@@ -15,7 +15,7 @@ export default defineStatModule({
   name: 'commanders',
   title: 'Commanders',
   description: 'Commander profile details: game mode, ranks, reputation and squadron, with a summary of each commander.',
-  version: 2,
+  version: 3,
   dependsOn: ['fleet', 'credits', 'inventory'],
   events: ['LoadGame', 'Rank', 'Progress', 'Promotion', 'Reputation', 'SquadronStartup', 'JoinedSquadron', 'LeftSquadron', 'Statistics'],
   ownedObjects: [{ type: 'table', name: 'commander_profiles' }],
@@ -27,6 +27,7 @@ export default defineStatModule({
       is_horizons      INTEGER,
       is_odyssey       INTEGER,
       ranks            TEXT NOT NULL DEFAULT '{}',
+      rank_since       TEXT NOT NULL DEFAULT '{}',  -- per rank: { at, isExact } when it reached its current value
       rank_progress    TEXT NOT NULL DEFAULT '{}',
       reputation       TEXT NOT NULL DEFAULT '{}',
       squadron_name    TEXT,
@@ -39,12 +40,12 @@ export default defineStatModule({
 
   createProcessor(database) {
     const ensureProfile = database.prepare('INSERT OR IGNORE INTO commander_profiles (commander_id) VALUES (?)');
-    const selectProfile = database.prepare('SELECT ranks, rank_progress FROM commander_profiles WHERE commander_id = ?');
+    const selectProfile = database.prepare('SELECT ranks, rank_since, rank_progress FROM commander_profiles WHERE commander_id = ?');
     const updateLogin = database.prepare(`
       UPDATE commander_profiles SET game_mode = ?, game_group = ?, is_horizons = ?, is_odyssey = ?, last_login = ?, updated_at = ?
       WHERE commander_id = ?
     `);
-    const updateRanks = database.prepare('UPDATE commander_profiles SET ranks = ?, updated_at = ? WHERE commander_id = ?');
+    const updateRanks = database.prepare('UPDATE commander_profiles SET ranks = ?, rank_since = ?, updated_at = ? WHERE commander_id = ?');
     const updateRankProgress = database.prepare('UPDATE commander_profiles SET rank_progress = ?, updated_at = ? WHERE commander_id = ?');
     const updateReputation = database.prepare('UPDATE commander_profiles SET reputation = ?, updated_at = ? WHERE commander_id = ?');
     const updateSquadron = database.prepare('UPDATE commander_profiles SET squadron_name = ?, squadron_rank = ?, updated_at = ? WHERE commander_id = ?');
@@ -64,8 +65,17 @@ export default defineStatModule({
 
         case 'Rank':
         case 'Promotion': {
-          const existingRanks = JSON.parse(selectProfile.get(commanderId).ranks);
-          updateRanks.run(JSON.stringify({ ...existingRanks, ...pickRankValues(data) }), timestamp, commanderId);
+          const profile = selectProfile.get(commanderId);
+          const existingRanks = JSON.parse(profile.ranks);
+          const rankSince = JSON.parse(profile.rank_since);
+          const newRanks = pickRankValues(data);
+          // When each rank reached its current value: exact for a Promotion; otherwise (first seen,
+          // or found changed at login) only that it was so by then.
+          for (const [rankType, value] of Object.entries(newRanks)) {
+            if (existingRanks[rankType] === value && rankSince[rankType]) continue;
+            rankSince[rankType] = { at: timestamp, isExact: event === 'Promotion' && existingRanks[rankType] !== undefined && existingRanks[rankType] !== value };
+          }
+          updateRanks.run(JSON.stringify({ ...existingRanks, ...newRanks }), JSON.stringify(rankSince), timestamp, commanderId);
           break;
         }
 
@@ -102,7 +112,7 @@ export default defineStatModule({
       SELECT
         commanders.id, commanders.name, commanders.fid, commanders.first_seen, commanders.last_seen,
         profiles.game_mode, profiles.game_group, profiles.is_horizons, profiles.is_odyssey,
-        profiles.ranks, profiles.rank_progress, profiles.reputation,
+        profiles.ranks, profiles.rank_since, profiles.rank_progress, profiles.reputation,
         profiles.squadron_name, profiles.squadron_rank, profiles.time_played_s, profiles.last_login,
         (SELECT COUNT(*) FROM journal_files WHERE journal_files.commander_id = commanders.id) AS journal_file_count,
         (SELECT COUNT(*) FROM journal_files WHERE journal_files.commander_id = commanders.id AND is_active = 1) AS active_journal_count
@@ -120,7 +130,7 @@ export default defineStatModule({
       const credits = getCreditSummaries(database);
       const fleets = getFleetSummaries(database);
       const inventories = getInventoryCounts(database);
-      const profiles = parseJsonColumns(commanderRows, ['ranks', 'rank_progress', 'reputation']).map((profile) => ({
+      const profiles = parseJsonColumns(commanderRows, ['ranks', 'rank_since', 'rank_progress', 'reputation']).map((profile) => ({
         ...profile,
         rank_names: describeRanks(profile.ranks ?? {}),
         next_rank_names: describeRanks(profile.ranks ?? {}, 1),
