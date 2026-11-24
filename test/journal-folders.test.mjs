@@ -30,11 +30,21 @@ async function serveJournalRoutes(fixture, journalDirectories = fixture.journalD
 }
 
 test('journal folders: -j takes several folders, repeated or separated by ";", without repeats', () => {
-  assert.deepEqual(splitJournalDirectories(['C:/Games/One']), [path.resolve('C:/Games/One')]);
-  assert.deepEqual(splitJournalDirectories(['C:/A', 'D:/B; E:/C ']), ['C:/A', 'D:/B', 'E:/C'].map((folder) => path.resolve(folder)));
-  const repeated = splitJournalDirectories(['C:/A;C:/A', 'C:/B']);
-  assert.equal(repeated.length, 2);
+  // Absolute paths for this system: a drive letter on Windows, none elsewhere.
+  const [a, b, c] = ['games/one', 'games/two', 'games/three'].map((folder) => path.resolve(folder));
+  assert.deepEqual(splitJournalDirectories([a]), [a]);
+  assert.deepEqual(splitJournalDirectories([a, `${b}; ${c} `]), [a, b, c]);
+  assert.deepEqual(splitJournalDirectories([`${a};${a}`, b]), [a, b]);
+  assert.deepEqual(splitJournalDirectories(['games/one']), [a], 'relative folders are made absolute');
   assert.throws(() => splitJournalDirectories([';']), /No journal folder/);
+});
+
+test('journal folders: ":" separates folders too, except on Windows (where it\'s in drive letters)', () => {
+  if (process.platform === 'win32') {
+    assert.deepEqual(splitJournalDirectories(['C:/Games/One']), [path.resolve('C:/Games/One')]);
+  } else {
+    assert.deepEqual(splitJournalDirectories(['/games/one:/games/two']), ['/games/one', '/games/two']);
+  }
 });
 
 test('journal folders: every folder is read, and journals are told apart by folder and name', async () => {

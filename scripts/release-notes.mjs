@@ -41,6 +41,7 @@ lines.push(
   '',
   '- **Windows:** the `.exe`. Run it; it starts in the background with an icon in the system tray.',
   '- **Linux (including Steam Deck):** the `-install.sh`. Run `sh ed-journal-tool-*-install.sh` (add `--help` for its options).',
+  '  - **Steam Deck:** install it as a service, `sh ed-journal-tool-*-install.sh --service`, so it keeps running in Game Mode (started from the menu, it stops when you leave Desktop Mode).',
   '- `SHA256SUMS.txt` has the checksums.',
   ...(repository ? [
     '',
