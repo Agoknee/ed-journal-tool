@@ -7,7 +7,7 @@ import { TickMonitor } from './bgs-ticks.mjs';
 import { ClockMonitor } from './clock-check.mjs';
 import { openDatabase } from './database/database.mjs';
 import { compactJournalEntries, vacuumIfDue } from './database/entry-compression.mjs';
-import { inaraAssetDirectory } from './data-paths.mjs';
+import { ensureDataDirectory, inaraAssetDirectory } from './data-paths.mjs';
 import { EventHub } from './events/event-hub.mjs';
 import { JournalIngester } from './journals/journal-ingester.mjs';
 import { defaultJournalDirectories, describeJournalSearch } from './journals/journal-locations.mjs';
@@ -30,6 +30,9 @@ export async function startApp() {
   // Parsed first so --help and --version print only their own output.
   const options = parseCommandLineOptions();
   logger.setDebug(options.debug);
+  // On a new system the data folder isn't there yet; the log, tray program, images and (by default)
+  // the database all go in it.
+  ensureDataDirectory();
   const dashboardUrl = `http://${options.bind === '0.0.0.0' ? 'localhost' : options.bind}:${options.port}`;
 
   // On Windows there's a tray icon (--no-tray turns it off), and the executable runs in the
