@@ -2,7 +2,9 @@
 #
 # - the Linux executable is started and its API and dashboard checked (scripts/smoke-test.mjs),
 #   then installed with the installer into a scratch home folder, started again, and uninstalled;
-# - the Windows exe is checked the same way on Windows.
+# - the Windows exe is checked the same way on Windows, in its console and in the background.
+#
+# Each runs as on a new system: its data folder doesn't exist yet (see the smoke test).
 #
 # Run by the pull request checks and the release, and by hand for any branch: Actions → Build →
 # Run workflow, choosing the branch. The files are then in the run's Artifacts. Built by hand, the
@@ -111,9 +113,15 @@ jobs:
         with:
           name: ${{ needs.build.outputs.artifact-name }}
           path: dist
-      # In this console (not in the background) and without the tray icon, as there's no desktop.
+      # Both as on a new system (scripts/smoke-test.mjs): in this console, and as when double-clicked
+      # (a hidden copy, logging to the data folder, with the tray icon).
       - name: Try the Windows exe
         shell: bash
         env:
           EDJT_EXPECTED_VERSION: ${{ needs.build.outputs.version }}
         run: node scripts/smoke-test.mjs "dist/ed-journal-tool-${{ needs.build.outputs.version }}.exe" --console --no-tray
+      - name: Try the Windows exe in the background
+        shell: bash
+        env:
+          EDJT_EXPECTED_VERSION: ${{ needs.build.outputs.version }}
+        run: node scripts/smoke-test.mjs --background "dist/ed-journal-tool-${{ needs.build.outputs.version }}.exe"

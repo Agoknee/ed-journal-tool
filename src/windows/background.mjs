@@ -7,16 +7,35 @@
  * opens the dashboard instead.
  */
 import { spawn } from 'node:child_process';
-import { closeSync, existsSync, openSync, readFileSync, renameSync, rmSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { dataDirectoryPath } from '../data-paths.mjs';
 
 /** Set in the hidden copy's environment. */
 export const BACKGROUND_CHILD_ENV = 'EDJT_BACKGROUND_CHILD';
 export const backgroundLogPath = path.join(dataDirectoryPath, 'edjt.log');
-const previousLogPath = path.join(dataDirectoryPath, 'edjt.previous.log');
 
 export const isBackgroundChild = () => process.env[BACKGROUND_CHILD_ENV] === '1';
+
+/**
+ * Opens the log for appending (its folder created first, as on a new system), after moving the
+ * last run's log to "<name>.previous.log". Returns the file descriptor.
+ * @param {string} [logPath]
+ * @returns {number}
+ */
+export function openBackgroundLog(logPath = backgroundLogPath) {
+  mkdirSync(path.dirname(logPath), { recursive: true });
+  if (existsSync(logPath)) {
+    const previousLogPath = logPath.replace(/(\.log)?$/, '.previous.log');
+    try {
+      rmSync(previousLogPath, { force: true });
+      renameSync(logPath, previousLogPath);
+    } catch {
+      // Still open (another copy writing to it, say): this run's log is added to the end instead.
+    }
+  }
+  return openSync(logPath, 'a');
+}
 
 /** Tells the starting copy (if any) that the web server is up, so it can exit. */
 export function reportBackgroundReady() {
@@ -44,12 +63,7 @@ export async function launchInBackground({ port, bind, dashboardUrl, appName }) 
     process.exit(0);
   }
 
-  // The last run's log is kept beside this one.
-  if (existsSync(backgroundLogPath)) {
-    rmSync(previousLogPath, { force: true });
-    renameSync(backgroundLogPath, previousLogPath);
-  }
-  const logFile = openSync(backgroundLogPath, 'a');
+  const logFile = openBackgroundLog();
 
   console.log(`Starting ${appName} in the background (look for its icon in the system tray)...`);
   // A packaged executable started from itself runs as plain node, so it's given the app's entry
