@@ -136,10 +136,14 @@ export function exposeEntryTextInSql(database) {
  * was. Progress is saved per chunk, so an interrupted run carries on where it stopped. Yields between
  * chunks so the server stays responsive.
  * @param {import('node:sqlite').DatabaseSync} database
- * @param {{ minTrainingEntryCount?: number }} [options]
+ * @param {object} [options]
+ * @param {number} [options.minTrainingEntryCount]
+ * @param {number} [options.chunkSize]
+ * @param {(progress: { checkedCount: number, totalCount: number, compressedCount: number }) => void} [options.onProgress]
+ *   called after each chunk
  * @returns {Promise<{ compressedCount: number, keptCount: number }>}
  */
-export async function compactJournalEntries(database, { minTrainingEntryCount = MIN_TRAINING_ENTRY_COUNT } = {}) {
+export async function compactJournalEntries(database, { minTrainingEntryCount = MIN_TRAINING_ENTRY_COUNT, chunkSize = COMPACTION_CHUNK_SIZE, onProgress } = {}) {
   const codec = getEntryCodec(database);
   const compactedThroughId = Number(readStorageState(database, COMPACTED_THROUGH_KEY) ?? 0);
   const maxEntryId = database.prepare('SELECT COALESCE(MAX(id), 0) AS maxEntryId FROM journal_entries').get().maxEntryId;
@@ -158,8 +162,8 @@ export async function compactJournalEntries(database, { minTrainingEntryCount = 
   let nextReportAt = Date.now() + 10_000;
   let isFirstChunk = true;
 
-  for (let chunkStartId = compactedThroughId; chunkStartId < maxEntryId; chunkStartId += COMPACTION_CHUNK_SIZE) {
-    const chunkEndId = Math.min(chunkStartId + COMPACTION_CHUNK_SIZE, maxEntryId);
+  for (let chunkStartId = compactedThroughId; chunkStartId < maxEntryId; chunkStartId += chunkSize) {
+    const chunkEndId = Math.min(chunkStartId + chunkSize, maxEntryId);
     runInTransaction(database, () => {
       for (const entry of selectChunk.all(chunkStartId, chunkEndId)) {
         if (typeof entry.data !== 'string' && entry.data[0] === codec.dictionaryId) continue;
@@ -179,6 +183,7 @@ export async function compactJournalEntries(database, { minTrainingEntryCount = 
       logger.info(`Compressing stored journal entries (one-time; up to ${totalCount.toLocaleString()} entries)...`);
     }
     isFirstChunk = false;
+    onProgress?.({ checkedCount: chunkEndId - compactedThroughId, totalCount, compressedCount: result.compressedCount });
     if (Date.now() >= nextReportAt) {
       logger.info(`  ...checked ${(chunkEndId - compactedThroughId).toLocaleString()}/${totalCount.toLocaleString()} entries`);
       nextReportAt = Date.now() + 10_000;

@@ -3,7 +3,9 @@ import { LiveUpdatesContext } from './live-updates-context.js';
 
 /** Refreshes are throttled so a busy play session doesn't refetch on every journal line. */
 const REFRESH_THROTTLE_MS = 1500;
-const UPDATE_TOPICS = ['journals', 'stats', 'scan', 'clock', 'notes', 'ticks', 'adjustments', 'shipStatus'];
+const UPDATE_TOPICS = ['journals', 'stats', 'scan', 'statsBuild', 'compression', 'clock', 'notes', 'ticks', 'adjustments', 'shipStatus'];
+/** Topics that are only progress to show, with nothing to refetch. */
+const PROGRESS_TOPICS = new Set(['statsBuild', 'compression']);
 
 /**
  * Subscribes to the server's event stream (/api/events) and exposes a version counter per topic.
@@ -16,6 +18,8 @@ export function LiveUpdatesProvider({ children }) {
   const [isConnected, setIsConnected] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(null);
   const [scanProgress, setScanProgress] = useState(null);
+  const [statsBuildProgress, setStatsBuildProgress] = useState(null);
+  const [compressionProgress, setCompressionProgress] = useState(null);
   const pendingTopicsRef = useRef(new Set());
   const throttleTimerRef = useRef(null);
 
@@ -37,6 +41,10 @@ export function LiveUpdatesProvider({ children }) {
       const update = JSON.parse(messageEvent.data);
       setLastUpdate(update);
       if (update.topic === 'scan') setScanProgress(update.payload);
+      // Progress is shown as it comes, not throttled like the refreshes.
+      if (update.topic === 'statsBuild') setStatsBuildProgress(update.payload);
+      if (update.topic === 'compression') setCompressionProgress(update.payload);
+      if (PROGRESS_TOPICS.has(update.topic)) return;
 
       pendingTopicsRef.current.add(update.topic);
       if (update.topic === 'stats') {
@@ -56,7 +64,7 @@ export function LiveUpdatesProvider({ children }) {
   }, []);
 
   return (
-    <LiveUpdatesContext.Provider value={{ versions, isConnected, lastUpdate, scanProgress }}>
+    <LiveUpdatesContext.Provider value={{ versions, isConnected, lastUpdate, scanProgress, statsBuildProgress, compressionProgress }}>
       {children}
     </LiveUpdatesContext.Provider>
   );

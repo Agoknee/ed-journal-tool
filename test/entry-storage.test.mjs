@@ -109,9 +109,14 @@ test('compacting entries keeps every stored line, stat and query result exactly 
     assert.equal(before.sql.rows[0][0], 300);
     assert.equal(before.summary.find((row) => row.event === 'Bounty').entry_count, 300);
 
-    const result = await compactJournalEntries(fixture.database, { minTrainingEntryCount: 1 });
+    // In chunks of 100, so progress is reported along the way.
+    const progress = [];
+    const result = await compactJournalEntries(fixture.database, { minTrainingEntryCount: 1, chunkSize: 100, onProgress: (update) => progress.push(update) });
     const entryCount = fixture.database.prepare('SELECT COUNT(*) AS entryCount FROM journal_entries').get().entryCount;
     assert.equal(result.compressedCount, entryCount);
+    assert.ok(progress.length >= 3, `${progress.length} progress updates`);
+    assert.ok(progress.every((update, index) => index === 0 || update.checkedCount > progress[index - 1].checkedCount), 'progress only goes up');
+    assert.deepEqual(progress.at(-1), { checkedCount: progress.at(-1).totalCount, totalCount: progress.at(-1).totalCount, compressedCount: entryCount });
     assert.equal(result.keptCount, 0);
     const storedKinds = fixture.database.prepare('SELECT typeof(data) AS kind, unicode(data) AS dictionaryId, COUNT(*) AS entryCount FROM journal_entries GROUP BY 1, 2').all();
     assert.deepEqual(storedKinds.map((row) => ({ ...row })), [{ kind: 'blob', dictionaryId: 1, entryCount }]);
