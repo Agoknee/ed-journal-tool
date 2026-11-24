@@ -18,10 +18,11 @@ import { createSqlRoutes } from './routes/sql-routes.mjs';
  * @param {import('../journals/journal-monitor.mjs').JournalMonitor} options.journalMonitor
  * @param {import('../journals/status-monitor.mjs').StatusMonitor} options.statusMonitor
  * @param {import('../events/event-hub.mjs').EventHub} options.eventHub
- * @param {string[]} options.journalDirectories
+ * @param {string[]} options.journalDirectories  (folders found later are added to it)
+ * @param {{ status: object }} [options.journalSearch]  whether it's still looking for a journal folder
  * @param {string} [options.inaraAssetDirectory]  where the downloaded Inara artwork is, served at /inara
  */
-export function createServer({ database, databasePath, statsEngine, journalMonitor, clockMonitor, statusMonitor, eventHub, journalDirectories, inaraAssetDirectory }) {
+export function createServer({ database, databasePath, statsEngine, journalMonitor, clockMonitor, statusMonitor, eventHub, journalDirectories, journalSearch, inaraAssetDirectory }) {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '1mb' }));
@@ -39,6 +40,7 @@ export function createServer({ database, databasePath, statsEngine, journalMonit
   apiRouter.get('/status', (request, response) => {
     response.json({
       journalDirectories,
+      journalSearch: journalSearch?.status ?? null,
       databasePath,
       startedAt: serverStartedAt,
       scan: journalMonitor.scanProgress,

@@ -45,6 +45,18 @@ export class JournalIngester {
   }
 
   /**
+   * Adds journal folders found after starting. The list is changed in place, so everything holding
+   * it (the API, say) sees them.
+   * @param {string[]} directories
+   * @returns {string[]} the ones that weren't already there
+   */
+  addJournalDirectories(directories) {
+    const added = normalizeJournalDirectories([...this.journalDirectories, ...directories]).slice(this.journalDirectories.length);
+    this.journalDirectories.push(...added);
+    return added;
+  }
+
+  /**
    * The journal files in every journal folder, oldest first. A folder that can't be read (a synced
    * or network folder that's unavailable, say) is left out and listed in unreadableDirectories.
    * @returns {Promise<{ files: { directory: string, fileName: string }[], unreadableDirectories: string[] }>}

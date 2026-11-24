@@ -19,7 +19,8 @@ const COMMANDER_IDENTITY_EVENTS = new Set(['Commander', 'LoadGame', 'NewCommande
  */
 export function createJournalRoutes(database, { journalDirectories, journalDirectory } = {}) {
   const router = Router();
-  const configuredDirectories = normalizeJournalDirectories(journalDirectories ?? [journalDirectory]);
+  // Looked at on each request: folders found after starting are added to the list.
+  const getConfiguredDirectories = () => normalizeJournalDirectories(journalDirectories ?? [journalDirectory]);
 
   // GET /api/commanders -> basic commander list (used for commander selectors)
   router.get('/commanders', (request, response) => {
@@ -79,7 +80,7 @@ export function createJournalRoutes(database, { journalDirectories, journalDirec
       SELECT directory, COUNT(*) AS file_count, COALESCE(SUM(is_missing), 0) AS missing_count
       FROM journal_files WHERE ?1 IS NULL OR commander_id = ?1 GROUP BY directory
     `).all(commanderIdFilter).map((row) => [row.directory, row]));
-    const folders = configuredDirectories.map((directory) => ({
+    const folders = getConfiguredDirectories().map((directory) => ({
       directory,
       fileCount: countsByDirectory.get(directory)?.file_count ?? 0,
       missingCount: countsByDirectory.get(directory)?.missing_count ?? 0,
@@ -143,7 +144,7 @@ export function createJournalRoutes(database, { journalDirectories, journalDirec
       return;
     }
     // Only from a configured journal folder: the one the ingester recorded for this journal.
-    if (!configuredDirectories.includes(journalFile.directory)) {
+    if (!getConfiguredDirectories().includes(journalFile.directory)) {
       response.status(404).json({ error: 'The file is no longer in any of the journal folders.' });
       return;
     }

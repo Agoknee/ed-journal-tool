@@ -272,6 +272,7 @@ export default function App() {
             </select>
           </label>
         </header>
+        <JournalFolderBanner />
         <ScanBanner />
         <ClockBanner />
         <ActivePage commanderFilter={commanderFilter} commanders={commanders} />
@@ -436,6 +437,22 @@ function ClockBanner() {
     <div className="notice notice-warning">
       This computer's clock is about {Math.abs(clockStatus.offsetSeconds).toFixed(1)}s {direction} the game server, so carrier
       jump and cooldown timers will be off by that much. Synchronize the system clock to fix it.
+    </div>
+  );
+}
+
+/** Says when no journal folder has been found (the game not installed or run yet, or somewhere unusual). */
+function JournalFolderBanner() {
+  const statusRequest = useApi('/api/status', {}, ['scan', 'journals']);
+  const search = statusRequest.data?.journalSearch;
+  if (!search?.isWaiting) return null;
+  return (
+    <div className="notice notice-warning">
+      {search.isAutomatic
+        ? <>No Elite Dangerous journal folder found yet (looked in {search.lookedIn}). </>
+        : <>The journal folder isn't there: {search.lookedIn}. </>}
+      It's checked again every minute and read as soon as it's there. If the game keeps its journals
+      somewhere else, restart ED Journal Tool with <code>--journaldir</code> and that folder.
     </div>
   );
 }

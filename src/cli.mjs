@@ -4,16 +4,12 @@ import { fileURLToPath } from 'node:url';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import { dataDirectoryPath } from './data-paths.mjs';
+import { defaultJournalDirectories } from './journals/journal-locations.mjs';
 
 /** In the standalone executable, this is the read-only bundled copy holding package.json and client/dist. */
 const projectRootPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const { version: appVersion } = JSON.parse(readFileSync(path.join(projectRootPath, 'package.json'), 'utf8'));
-
-const defaultJournalDirectory = path.join(
-  process.env.USERPROFILE ?? process.env.HOME ?? '.',
-  'Saved Games/Frontier Developments/Elite Dangerous',
-);
 
 const defaultDatabasePath = path.join(dataDirectoryPath, 'journals.db');
 
@@ -48,10 +44,10 @@ export function splitJournalDirectories(values) {
 
 /**
  * Parses command-line options.
- * @returns {{ port: number, bind: string, debug: boolean, journaldir: string[], database: string, devClient: boolean, rebuildStats: boolean }}
+ * @returns {{ port: number, bind: string, debug: boolean, journaldir: string[], isJournalDirAutomatic: boolean, database: string, devClient: boolean, rebuildStats: boolean }}
  */
 export function parseCommandLineOptions(argv = process.argv) {
-  return yargs(hideBin(argv))
+  const options = yargs(hideBin(argv))
     .scriptName('ed-journal-monitor')
     .usage('$0 [options]\n\nMonitors Elite Dangerous journal files and serves stats through an API and dashboard.')
     .option('port', {
@@ -76,8 +72,9 @@ export function parseCommandLineOptions(argv = process.argv) {
       alias: 'j',
       type: 'string',
       array: true,
-      default: [defaultJournalDirectory],
-      defaultDescription: '"Saved Games/Frontier Developments/Elite Dangerous" in your user folder',
+      defaultDescription: process.platform === 'win32'
+        ? '"Saved Games/Frontier Developments/Elite Dangerous" in your user folder'
+        : 'found on its own (Steam/Proton, Heroic, Lutris, Bottles or Wine folders)',
       describe: `Elite Dangerous journal folder. Repeat it (-j A -j B), or separate folders with "${JOURNAL_DIRECTORY_SEPARATOR_LABEL}", to read several (e.g. one synced from another computer)`,
       coerce: splitJournalDirectories,
     })
@@ -108,6 +105,11 @@ export function parseCommandLineOptions(argv = process.argv) {
     .alias('version', 'v')
     .strict()
     .parseSync();
+  // Searched for only when not given (on Linux, through Steam's and Wine's folders); none found is
+  // an empty list, and the app keeps looking.
+  options.isJournalDirAutomatic = !options.journaldir;
+  if (options.isJournalDirAutomatic) options.journaldir = defaultJournalDirectories();
+  return options;
 }
 
 export { appVersion, projectRootPath };

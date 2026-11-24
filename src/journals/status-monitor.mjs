@@ -74,11 +74,8 @@ export class StatusMonitor {
   constructor({ database, journalDirectories, journalDirectory, eventHub }) {
     this.database = database;
     /** Each journal folder's Status.json, and when it was last read. */
-    this.statusFiles = normalizeJournalDirectories(journalDirectories ?? [journalDirectory]).map((directory) => ({
-      directory,
-      statusPath: path.join(directory, STATUS_FILE_NAME),
-      lastModifiedMs: 0,
-    }));
+    this.statusFiles = [];
+    this.addJournalDirectories(journalDirectories ?? [journalDirectory]);
     this.eventHub = eventHub;
     this.timer = null;
     this.lastFuelPublishMs = 0;
@@ -92,6 +89,14 @@ export class StatusMonitor {
       JOIN commanders ON commanders.id = journal_files.commander_id
       WHERE journal_files.is_active = 1 ORDER BY journal_files.modified_ms DESC
     `);
+  }
+
+  /** Also reads the Status.json in these journal folders. */
+  addJournalDirectories(directories) {
+    const known = this.statusFiles.map((statusFile) => statusFile.directory);
+    for (const directory of normalizeJournalDirectories([...known, ...directories]).slice(known.length)) {
+      this.statusFiles.push({ directory, statusPath: path.join(directory, STATUS_FILE_NAME), lastModifiedMs: 0 });
+    }
   }
 
   start() {

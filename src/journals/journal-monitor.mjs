@@ -44,11 +44,14 @@ export class JournalMonitor {
   /** The journal folders, for log messages. */
   describeDirectories() {
     const directories = this.ingester.journalDirectories;
+    if (directories.length === 0) return 'no folders';
     return directories.length === 1 ? `"${directories[0]}"` : `${directories.length} folders (${directories.map((directory) => `"${directory}"`).join(', ')})`;
   }
 
   /** Reads every journal file that changed since the last run. */
   async scanJournalDirectory() {
+    // With no folder yet, nothing is read, and the journals already stored aren't marked missing.
+    if (this.ingester.journalDirectories.length === 0) return;
     const listing = await this.ingester.listJournalFiles();
     const journalFiles = listing.files;
     this.ingester.markMissingFiles(listing);
@@ -100,7 +103,17 @@ export class JournalMonitor {
 
     this.timers.push(setInterval(() => this.pollActiveFiles(), ACTIVE_FILE_POLL_MS));
     this.timers.push(setInterval(() => this.refreshActiveFiles(), ACTIVE_STATUS_REFRESH_MS));
+    if (journalDirectories.length > 0) logger.info(`Watching for journal changes in ${this.describeDirectories()}`);
+  }
+
+  /** Starts reading journal folders found after starting (the game installed since, say). */
+  async addDirectories(directories) {
+    const added = this.ingester.addJournalDirectories(directories);
+    if (added.length === 0) return added;
+    this.watcher?.add(added);
+    await this.scanJournalDirectory();
     logger.info(`Watching for journal changes in ${this.describeDirectories()}`);
+    return added;
   }
 
   async stop() {
