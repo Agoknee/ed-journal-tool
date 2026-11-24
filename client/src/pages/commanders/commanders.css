@@ -93,6 +93,10 @@
 .spansh-dialog a { color: var(--color-info); }
 .spansh-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; font-size: 0.9rem; }
 .spansh-problem { color: var(--color-danger); }
+/* On a commander card, the route buttons sit at the top right beside the Online badge. The row centres
+   them on each other (exact at any zoom), keeps its own height rather than the header's, and is raised
+   so the badge stays level with the commander's name. */
+.card-header .commander-card-badges { align-items: center; align-self: flex-start; margin-top: -3.5px; }
 .ship-loadout-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .ship-loadout-actions button { font-size: 0.85rem; padding: 5px 10px; }
 

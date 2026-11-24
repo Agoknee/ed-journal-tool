@@ -158,6 +158,13 @@ button.last-tick:hover { border-color: var(--color-border); }
 .stat-card-accent .stat-value { color: var(--color-accent); }
 .stat-card-live .stat-value { color: var(--color-live); }
 .stat-card-danger .stat-value { color: var(--color-danger); }
+/* Grouped stat cards: wider than single stats, with a few quiet label/value lines under the headline. */
+.stat-grid-groups { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.stat-unit { font-size: 0.9rem; font-weight: 400; color: var(--color-text-muted); }
+.stat-group-rows { margin: 8px 0 0; display: grid; gap: 2px; font-size: 0.85rem; }
+.stat-group-row { display: flex; justify-content: space-between; gap: 12px; }
+.stat-group-row dt { color: var(--color-text-muted); }
+.stat-group-row dd { margin: 0; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .stat-value-text { display: block; font-size: 1.05rem; line-height: 1.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Cards */

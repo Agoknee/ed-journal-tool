@@ -1,28 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import { fetchJson } from '../../api.js';
 import { copyToClipboard } from '../../clipboard.js';
 import DataTable from '../../components/DataTable.jsx';
-import RouteIcon from '../../components/RouteIcon.jsx';
 import { Badge, LoadingState, Section, StatCard, StatGrid } from '../../components/ui.jsx';
 import { useApi } from '../../hooks/use-api.js';
 import {
-  formatCredits, formatDateTime, formatNumber, formatRelativeTime, formatShipName, formatSystemName,
+  formatCredits, formatDateTime, formatNumber, formatRelativeTime, formatSystemName,
 } from '../../format.js';
-import { buildSpanshPlotterUrl, buildWaypointPlannerUrl, isSpanshHelperInstalled, isWaypointHelperInstalled } from '../../spansh.js';
-import SpanshRouteDialog from './SpanshRouteDialog.jsx';
-
-/** A ship's last loadout as EDSY/Coriolis links and SLEF, fetched once per loadout and reused. */
-const exportRequests = new Map();
-function fetchShipExport(commanderId, { shipId, loadoutAt }) {
-  const key = `${commanderId}:${shipId}:${loadoutAt}`;
-  if (!exportRequests.has(key)) {
-    exportRequests.set(key, fetchJson(`/api/stats/fleet/export?commander=${commanderId}&ship=${shipId}`).catch((error) => {
-      exportRequests.delete(key);
-      throw error;
-    }));
-  }
-  return exportRequests.get(key);
-}
+import { fetchShipExport } from '../../ship-export.js';
+import ShipRouteButtons from './ShipRouteButtons.jsx';
 
 /** Ships (with their full loadout), stored modules and vehicles. */
 export default function FleetSection({ commanderId, picker, focusRequest }) {
@@ -30,44 +15,12 @@ export default function FleetSection({ commanderId, picker, focusRequest }) {
   const locationRequest = useApi(commanderId ? '/api/stats/travel/locations' : null, { commander: commanderId });
   const [selectedShipId, setSelectedShipId] = useState(null);
   const [isSoldShown, setIsSoldShown] = useState(false);
-  const [spanshRequest, setSpanshRequest] = useState(null);
 
   // A ship's route starts where it is: the commander's system for the ship being flown.
   const commanderLocation = locationRequest.data?.locations?.find((location) => location.commander_id === commanderId);
   const getRouteSource = (ship) => (ship.isCurrent
     ? commanderLocation?.star_system && { name: commanderLocation.star_system, id64: commanderLocation.system_address ?? undefined }
     : ship.location.starSystem && { name: ship.location.starSystem }) || null;
-  const plotRoute = async (ship) => {
-    const request = {
-      label: formatShipName(ship.shipTypeName, ship.name),
-      source: getRouteSource(ship),
-      getExport: () => fetchShipExport(commanderId, ship),
-    };
-    if (!isSpanshHelperInstalled()) {
-      setSpanshRequest(request);
-      return;
-    }
-    // The tab is opened in the click itself (browsers block it later), then sent on.
-    const newTab = window.open('', '_blank');
-    try {
-      const { slef } = await request.getExport();
-      if (newTab) {
-        newTab.opener = null;
-        newTab.location.href = buildSpanshPlotterUrl({ source: request.source, slef, label: request.label });
-      }
-    } catch {
-      newTab?.close();
-    }
-  };
-  // The Multi Waypoint Planner, starting where the ship is; the userscript then waits for a pasted list.
-  const planWaypoints = (ship) => {
-    const request = { kind: 'waypoints', label: formatShipName(ship.shipTypeName, ship.name), source: getRouteSource(ship) };
-    if (!isWaypointHelperInstalled()) {
-      setSpanshRequest({ ...request, isOutdated: isSpanshHelperInstalled() });
-      return;
-    }
-    window.open(buildWaypointPlannerUrl({ start: request.source, label: request.label }), '_blank', 'noopener');
-  };
 
   // Asked to show a commander's ship (from their card): once their fleet has loaded, select the
   // ship they're flying and scroll to its loadout.
@@ -162,17 +115,11 @@ export default function FleetSection({ commanderId, picker, focusRequest }) {
                     label: 'Route',
                     shrink: true,
                     align: 'center',
-                    render: (ship) => (
-                      <span className="route-buttons">
-                        <RouteButton ship={ship} onPlot={plotRoute} />
-                        <WaypointsButton ship={ship} hasStart={Boolean(getRouteSource(ship))} onPlan={planWaypoints} />
-                      </span>
-                    ),
+                    render: (ship) => <ShipRouteButtons commanderId={commanderId} ship={ship} source={getRouteSource(ship)} />,
                   },
                 ]}
               />
               <p className="muted small">Click a ship to see its loadout. Its route buttons plot a route for it on Spansh, or plan a route through several systems from where it is (paste the list when the planner opens).</p>
-              <SpanshRouteDialog request={spanshRequest} onClose={() => setSpanshRequest(null)} />
 
               {selectedShip && <ShipLoadout key={selectedShip.shipId} ship={selectedShip} commanderId={commanderId} />}
 
@@ -239,63 +186,6 @@ export default function FleetSection({ commanderId, picker, focusRequest }) {
         }}
       </LoadingState>
     </Section>
-  );
-}
-
-/** Opens Spansh's Galaxy Plotter for the ship: its build, starting where it is. */
-function RouteButton({ ship, onPlot }) {
-  const unavailableReason = ship.isSold ? 'This ship is sold or lost.' : !ship.loadoutAt ? 'Not flown since the journals began, so its build isn’t known.' : null;
-  return (
-    <button
-      type="button"
-      className="route-button"
-      disabled={Boolean(unavailableReason)}
-      title={unavailableReason ?? 'Plot a route for this ship on Spansh (opens a new tab)'}
-      aria-label={`Plot a route for ${formatShipName(ship.shipTypeName, ship.name)} on Spansh`}
-      onClick={(clickEvent) => {
-        clickEvent.stopPropagation();
-        onPlot(ship);
-      }}
-    >
-      <RouteIcon />
-    </button>
-  );
-}
-
-/** Opens the Multi Waypoint Planner with the ship's system as the start, ready for a pasted list of systems. */
-function WaypointsButton({ ship, hasStart, onPlan }) {
-  const unavailableReason = ship.isSold ? 'This ship is sold or lost.' : !hasStart ? 'Where this ship is isn’t known.' : null;
-  return (
-    <button
-      type="button"
-      className="route-button"
-      disabled={Boolean(unavailableReason)}
-      title={unavailableReason ?? 'Plan a route through several systems from here (Multi Waypoint Planner; paste the list when it opens)'}
-      aria-label={`Plan a multi-waypoint route from ${formatShipName(ship.shipTypeName, ship.name)}’s system`}
-      onClick={(clickEvent) => {
-        clickEvent.stopPropagation();
-        onPlan(ship);
-      }}
-    >
-      <WaypointsIcon />
-    </button>
-  );
-}
-
-/**
- * A long route: from a start, snaking back and forth through several stops to a flag at the end,
- * so it reads apart from the Spansh button's three-node route beside it.
- */
-function WaypointsIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M4 19.5H15.5a3 3 0 0 0 0-6H8.5a3 3 0 0 1 0-6H17" fill="none" />
-      <circle cx="4" cy="19.5" r="2.3" stroke="none" />
-      <circle cx="12" cy="13.5" r="1.6" stroke="none" />
-      <circle cx="12" cy="7.5" r="1.6" stroke="none" />
-      <path d="M18 7.5V2.5" fill="none" />
-      <path d="M18 2.8h3.6l-1 1.5 1 1.5H18z" strokeWidth="1.2" />
-    </svg>
   );
 }
 

@@ -19,8 +19,8 @@ export function Section({ id, title, actions, children, description }) {
   );
 }
 
-export function StatGrid({ children }) {
-  return <div className="stat-grid">{children}</div>;
+export function StatGrid({ children, className = '' }) {
+  return <div className={`stat-grid ${className}`.trim()}>{children}</div>;
 }
 
 export function StatCard({ label, value, detail, tone, title }) {
@@ -29,6 +29,34 @@ export function StatCard({ label, value, detail, tone, title }) {
       <div className="stat-label">{label}</div>
       <div className="stat-value">{value}</div>
       {detail && <div className="stat-detail">{detail}</div>}
+    </div>
+  );
+}
+
+/**
+ * A card for a group of related figures: one headline (with an optional unit after it) and a few
+ * smaller label/value lines under it. Lines without a value are left out.
+ * rows: [{ label, value, title? }]
+ */
+export function StatGroupCard({ label, value, unit, rows = [], tone, title }) {
+  const shownRows = rows.filter((row) => row && row.value !== null && row.value !== undefined);
+  return (
+    <div className={`stat-card stat-group-card ${tone ? `stat-card-${tone}` : ''}`} title={title}>
+      <div className="stat-label">{label}</div>
+      <div className="stat-value">
+        {value}
+        {unit && <span className="stat-unit"> {unit}</span>}
+      </div>
+      {shownRows.length > 0 && (
+        <dl className="stat-group-rows">
+          {shownRows.map((row) => (
+            <div key={row.label} className="stat-group-row" title={row.title}>
+              <dt>{row.label}</dt>
+              <dd>{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
     </div>
   );
 }

@@ -121,7 +121,7 @@ test('fleet: ships, loadouts, sales, suits, weapons, vehicles and export', async
       { shipCount: commanders[0].summary.shipCount, fleetValue: commanders[0].summary.fleetValue, storedModuleCount: commanders[0].summary.storedModuleCount },
       { shipCount: 2, fleetValue: 310000, storedModuleCount: 2 },
     );
-    assert.deepEqual(commanders[0].summary.currentShip, { shipId: 1, shipTypeName: 'Sidewinder', name: 'Little One', ident: 'AB-01', cargoCapacity: 4 });
+    assert.deepEqual(commanders[0].summary.currentShip, { shipId: 1, shipTypeName: 'Sidewinder', name: 'Little One', ident: 'AB-01', cargoCapacity: 4, loadoutAt: T(1) });
     assert.equal(combined.shipCount, 2);
   } finally {
     await fixture.close();

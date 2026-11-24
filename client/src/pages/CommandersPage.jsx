@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import CopyableText from '../components/CopyableText.jsx';
-import { Badge, KeyValueList, LoadingState, Section, StatCard, StatGrid } from '../components/ui.jsx';
+import { Badge, KeyValueList, LoadingState, Section, StatGrid, StatGroupCard } from '../components/ui.jsx';
 import { useApi } from '../hooks/use-api.js';
 import { STORED_ID, useStoredState } from '../hooks/use-stored-state.js';
 import {
@@ -12,6 +12,7 @@ import EngineersSection from './commanders/EngineersSection.jsx';
 import FleetSection from './commanders/FleetSection.jsx';
 import InventorySection from './commanders/InventorySection.jsx';
 import RanksSection from './commanders/RanksSection.jsx';
+import ShipRouteButtons from './commanders/ShipRouteButtons.jsx';
 import './commanders/commanders.css';
 
 const DETAIL_COMMANDER_STORAGE_KEY = 'commanders.detailCommander';
@@ -20,10 +21,8 @@ export default function CommandersPage({ commanderFilter }) {
   const commanderParams = { commander: commanderFilter };
   const profilesRequest = useApi('/api/stats/commanders', commanderParams);
   const locationsRequest = useApi('/api/stats/travel/locations', commanderParams);
-  const carriersRequest = useApi('/api/stats/carriers', commanderParams);
 
   const locationsByCommander = indexBy(locationsRequest.data?.locations, 'commander_id');
-  const carrierStatusByCommander = indexBy(carriersRequest.data?.commanderStatuses, 'commanderId');
 
   // The detail sections show one commander: the one chosen at the top of the app, or with all
   // commanders shown, the one picked here (remembered in the browser).
@@ -49,16 +48,7 @@ export default function CommandersPage({ commanderFilter }) {
     <>
       <Section title="Overview">
         <LoadingState requestState={profilesRequest}>
-          {({ combined, commanders }) => (
-            <StatGrid>
-              <StatCard label="Commanders" value={commanders.length} />
-              <StatCard label="Credits" value={formatCredits(combined.credits)} detail="Last known balance" />
-              <StatCard label="Ships" value={formatNumber(combined.shipCount)} detail={`Fleet value ${formatCredits(combined.fleetValue)}`} />
-              <StatCard label="Stored modules" value={formatNumber(combined.storedModuleCount)} />
-              <StatCard label="Materials" value={formatNumber(combined.materialCount)} />
-              <StatCard label="Cargo" value={`${formatNumber(combined.cargoCount)} t`} />
-            </StatGrid>
-          )}
+          {({ combined, commanders }) => <OverviewCards combined={combined} commanders={commanders} />}
         </LoadingState>
       </Section>
 
@@ -71,7 +61,6 @@ export default function CommandersPage({ commanderFilter }) {
                   key={profile.id}
                   profile={profile}
                   location={locationsByCommander[profile.id]}
-                  carrierStatus={carrierStatusByCommander[profile.id]?.carrierStatus}
                   onShowShip={() => showDetails(profile.id, 'loadout')}
                   onShowCredits={() => showDetails(profile.id, 'credits')}
                 />
@@ -90,7 +79,61 @@ export default function CommandersPage({ commanderFilter }) {
   );
 }
 
-function CommanderCard({ profile, location, carrierStatus, onShowShip, onShowCredits }) {
+/**
+ * The overview: four grouped cards (commanders, credits, fleet, inventory), each a headline figure
+ * with a couple of related ones under it, across all the commanders shown.
+ */
+function OverviewCards({ combined, commanders }) {
+  const onlineCount = commanders.filter((profile) => profile.active_journal_count > 0).length;
+  // Time played is the game's own figure for each commander, added up.
+  const played = commanders.filter((profile) => profile.time_played_s > 0);
+  const playedSeconds = played.reduce((total, profile) => total + profile.time_played_s, 0);
+  const mostPlayed = played.reduce((most, profile) => (!most || profile.time_played_s > most.time_played_s ? profile : most), null);
+  return (
+    <StatGrid className="stat-grid-groups">
+      <StatGroupCard
+        label="Commanders"
+        value={formatNumber(commanders.length)}
+        rows={[
+          { label: 'Online', value: formatNumber(onlineCount) },
+          {
+            label: 'Time played',
+            value: playedSeconds > 0 ? formatDuration(playedSeconds) : null,
+            title: mostPlayed && played.length > 1 ? `Most played: CMDR ${mostPlayed.name} (${formatDuration(mostPlayed.time_played_s)})` : undefined,
+          },
+        ]}
+      />
+      <StatGroupCard
+        label="Credits"
+        value={formatCredits(combined.credits)}
+        title="Each commander’s last known balance, added up"
+        rows={[
+          { label: 'Total wealth', value: combined.currentWealth ? formatCredits(combined.currentWealth) : null, title: 'Credits and assets, per the game’s own statistics' },
+        ]}
+      />
+      <StatGroupCard
+        label="Fleet"
+        value={formatNumber(combined.shipCount)}
+        unit={combined.shipCount === 1 ? 'ship' : 'ships'}
+        rows={[
+          { label: 'Fleet value', value: formatCredits(combined.fleetValue) },
+          { label: 'Stored modules', value: formatNumber(combined.storedModuleCount) },
+        ]}
+      />
+      <StatGroupCard
+        label="Inventory"
+        value={formatNumber(combined.materialCount)}
+        unit="materials"
+        rows={[
+          { label: 'Cargo', value: `${formatNumber(combined.cargoCount)} t` },
+          { label: 'Ship locker', value: `${formatNumber(combined.shipLockerCount)} items`, title: 'On-foot items: goods, assets and data' },
+        ]}
+      />
+    </StatGrid>
+  );
+}
+
+function CommanderCard({ profile, location, onShowShip, onShowCredits }) {
   const { summary } = profile;
   const currentShip = summary.currentShip;
   const ranks = profile.rank_names ?? {};
@@ -104,8 +147,15 @@ function CommanderCard({ profile, location, carrierStatus, onShowShip, onShowCre
             {profile.fid ? <CopyableText copyText={profile.fid}>{profile.fid}</CopyableText> : '—'} · last seen {formatRelativeTime(profile.last_seen)}
           </div>
         </div>
-        <div className="badge-row">
+        <div className="badge-row commander-card-badges">
           {isOnline && <Badge tone="live">Online</Badge>}
+          {currentShip && (
+            <ShipRouteButtons
+              commanderId={profile.id}
+              ship={currentShip}
+              source={location?.star_system ? { name: location.star_system, id64: location.system_address ?? undefined } : null}
+            />
+          )}
         </div>
       </header>
       <KeyValueList items={[
@@ -134,7 +184,6 @@ function CommanderCard({ profile, location, carrierStatus, onShowShip, onShowCre
           ),
         },
         { label: 'Fleet', value: `${formatNumber(summary.shipCount)} ships · ${formatCredits(summary.fleetValue)}` },
-        { label: 'Carrier', value: carrierStatus ?? 'None' },
         isOnline && { label: 'Game mode', value: profile.game_mode ? `${profile.game_mode}${profile.game_group ? ` (${profile.game_group})` : ''}` : null },
         profile.squadron_name && {
           label: 'Squadron',
@@ -142,7 +191,6 @@ function CommanderCard({ profile, location, carrierStatus, onShowShip, onShowCre
           copyText: profile.squadron_name,
         },
         { label: 'Time played', value: formatDuration(profile.time_played_s) },
-        { label: 'Journals', value: formatNumber(profile.journal_file_count) },
       ]} />
       {Object.keys(ranks).length > 0 && (
         <div className="rank-list">

@@ -669,6 +669,7 @@ export function getFleetSummaries(database) {
         name: row.ship_name,
         ident: row.ship_ident,
         cargoCapacity: row.cargo_capacity,
+        loadoutAt: row.loadout_at,
       };
     }
     summaries.set(row.commander_id, summary);
