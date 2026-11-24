@@ -1,30 +1,66 @@
 # ED Journal Tool
 
-Watches Elite Dangerous journal files, stores every entry in SQLite (`node:sqlite`), parses stats into their own tables, and serves an API (`/api`) plus a React dashboard.
+Watches Elite Dangerous journal files, stores every entry in SQLite, parses stats into their own tables, and serves a REST API plus a React dashboard.
 
 Journal files are only ever opened read-only.
+
+## Important: Please Read!
+
+This tool is 100% vibe-coded by Claude. It's something I've been wanting to build for months, but never found the time for. It's built using the technology I wanted and in the structure I had always envisioned, but the code is almost entirely written by Claude. The people that deserve all credit for this are the authors of existing Elite Dangerous tools. These developers have spent countless hours reverse-engineering the Elite Dangerous journal file format and figuring out various tricks to parse out the desired data. This tool (and the many other AI-generated journal tools being built) would not be possible without the hard work of those developers. Please check out and support their projects! Some specific call-outs:
+- [Elite Dangerous Carrier Manager (EDCM)](https://www.edcm.app/) -- If you have a fleet carrier, you want this tool. It is incredibly useful with many excellent features and runs well along-side EDJT. This code was analyzed to help determine carrier tracking and game-server clock synchronization.
+- [Pab's AFK Monitor](https://github.com/PsiPab/ED-AFK-Monitor) -- If you run AFK stacks (or other Wing Massacre Missions), this tool is very helpful. This code was analyzed to help with the combat panel, shown while an AFK stack is active. EDJT will also soon have a button to automatically launch AFK Monitor against the matching journal file for an active commander.
+- [BGS-Tally](https://github.com/v-tolagh/BGS-Tally) -- The code from this EDMC plugin was used to build the BGS Reporting functionality.
+- [Spansh](https://www.spansh.co.uk/) -- Spansh contains invaluable Elite Dangerous data, including many powerful route plotting tools. EDJT integrates with these plotters.
+- [Wanderer's Toolbox](https://wanderer-toolbox.com/useful-tools/multi-waypoint/) -- The Wanderer's Toolbox contains several well-written guides and some useful tools. EDJT integrates with the multi-waypoint tool.
+- [Inara](https://inara.cz/elite/) -- Elite Dangerous would simply be unplayable without the incredible Inara website/database. Some rank, powerplay, and material icons shown in EDJT come from Inara.
 
 ## Features
 
 - **Stats, stats, and more stats (with more to come).** Commanders (fleet, inventory, ranks and reputation, credits, engineers), fleet carriers (details, jump history, bank history), travel, trade and markets, carrier depots, BGS activity, missions, combat and chat, across every commander in your journals.
-- **Massacre stacks.** Tracks AFK massacre stacks like OD Elite Tracker or EDMT: missions grouped by target, the kills the stack needs (as many as its largest faction asks for), progress for each faction, and the rewards. It works well for building a stack as well as running one. Wing mining missions (WMM) are tracked under Missions → Mining & Cargo too, but haven't been tested yet, as the game's WMM missions have been unreliable.
+- **Massacre stacks.** Tracks AFK massacre stacks like OD Elite Tracker or EDMT: missions grouped by target, the kills the stack needs (as many as its largest faction asks for), progress for each faction, and the rewards. Wing mining missions (WMM) are tracked under Missions → Mining & Cargo too, but haven't been tested yet. Plans to add a button to auto-launch Pab's AFK monitor matched to the correct journal file.
 - **A live combat panel** for AFK sessions: kills and kill rate, time since the last kill, the time left to finish the stack, and warnings for your fighter (destroyed, rebuilt, or not deployed), shields, hull, hardpoints and fuel (including whether it lasts until the stack is done).
 - **Combat history:** every session, kill, death and interdiction, with kills over time, when you fight, and who you fought.
 - **BGS reports like BGS-Tally.** Activity per system and faction, with a button that copies a Discord-ready message in BGS-Tally's ANSI format, for one commander or all of them combined. It reads the journals themselves, so nothing is missed: it doesn't matter which games were launched in which order, or whether EDJT was running at the time. Activity the journals don't record can be added as manual adjustments.
 - **BGS tick tracking,** with a tick history, and a warning when your PC's clock is off from the game server's (which throws off carrier jump and cooldown timers).
-- **One-click route planning.** Opens Spansh's Galaxy Plotter with a ship's build (SLEF) and its current system filled in; the Fleet Carrier Router with your carrier's system, type and used capacity; or the Wanderer's Toolbox Multi Waypoint Planner at its import dialog, which optimizes the route as soon as you paste a list of systems. (These need the userscript the dashboard offers to install.)
-- **Ship builds** as EDSY and Coriolis links, or SLEF to copy.
+- **One-click route planning.** Opens Spansh's Galaxy Plotter with a ship's build (SLEF) and its current system filled in; the Fleet Carrier Router with your carrier's system, type and used capacity; or the Wanderer's Toolbox Multi Waypoint Planner at its import dialog, which optimizes the route as soon as you paste a list of systems. (These need a userscript, which the dashboard offers to install.)
+- **Ship builds** exported as EDSY and Coriolis links, or SLEF to copy.
 - **Notes** on any carrier or commander.
 - **Finds your journals by itself:** the usual Windows folder, or on Linux Steam/Proton, Heroic, Lutris, Bottles and Wine folders. It can read several journal folders at once (one synced from another PC, say), and if none is found yet it keeps looking.
 - **Keeps every journal entry** in its database (compressed), so the original journal files can be deleted once they've been read.
-- **Use it from any device on your network,** phones included: the dashboard is a web page served on port 4267, so you can watch an AFK session from your phone.
-- **The Windows tray icon** opens the dashboard, shows the log, or quits. The Windows exe runs in the background with no console window.
+- **Use it from any device on your network,** phones included: the dashboard is a web page served on port 4267 (monitoring AFK sessions from your phone is amazing).
+- **The Windows tray icon** opens the dashboard, shows the log, or quits. The Windows EXE runs in the background with no console window.
 - **Windows and Linux.** The Linux installer adds a menu entry, and can run EDJT as a service so it keeps running in the background. That should let it work on a Steam Deck in Game Mode as well as Desktop Mode, but it hasn't been tried on one yet.
 - **Journal details and raw SQL.** Click "X active journals" at the bottom left for every journal file and its status (including corrupt or unreadable ones), the raw lines of any journal, and a tool for running read-only SQL queries on all the stored data.
 
-Downloads are on the [Releases](https://github.com/Agoknee/ed-journal-tool/releases) page: the Windows `.exe`, and the Linux installer (`sh ed-journal-tool-*-install.sh`; Steam Deck users, add `--service`).
+## Installation
 
-## Setup
+Downloads are on the [Releases](https://github.com/Agoknee/ed-journal-tool/releases) page.
+
+The Windows `.exe` is standalone and can run from any directory. When launched, it will minimize to the system tray (unless disabled via CLI parameters).
+
+The Linux installer `.sh` is a self-extracting shell script, which will install the application for the current user and add it to the launch menu.
+- If the installer is run with the `--service` parameter, the application will be installed as a user service. Running the application from the launch menu will open the web interface.
+  - Running as a service is needed on Steam Deck, to allow it to continue running in both Game and Desktop modes.
+- Running a new version of the installer will upgrade an existing installation.
+
+### Options
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `-p, --port` | `4267` | Web server port |
+| `-b, --bind` | `0.0.0.0` | Host/IP to bind (all interfaces by default) |
+| `-d, --debug` | `false` | Verbose logging |
+| `-j, --journaldir` | Found automatically | The journal folder. Windows: `%USERPROFILE%\Saved Games\Frontier Developments\Elite Dangerous`. Linux: searched for in Steam/Proton (including Flatpak and Snap Steam), Heroic, Lutris, Bottles and Wine folders, and looked for again every minute until found. Repeat it (`-j A -j B`), or separate folders with `;` (or `:` on Linux), to read several at once |
+| `--database` | `%LOCALAPPDATA%\edjt\journals.db` (`~/.local/share/edjt/journals.db` on Linux) | SQLite database path |
+| `--rebuild-stats` | `false` | Clear and rebuild all stats from stored entries on launch |
+| `--no-download-images` | | Don't download the rank, Powerplay and engineer images from Inara (downloaded on first run, and whenever some are missing) |
+| `--no-tray` | | Windows: no system tray icon (shown by default) |
+| `--console` | `false` | Windows executable: stay in the console window instead of running in the background with only the tray icon |
+| `--log-file` | | Windows: the file this run's output is redirected to, for the tray icon's "Show Log" (the background exe uses `%LOCALAPPDATA%\edjt\edjt.log` by itself) |
+| `--dev-client` | `false` | Serve the dashboard from client source with Vite (hot reload); used by `npm start` |
+| `-h, --help` / `-v, --version` | | Show the options / the version |
+
+## Developer Setup
 
 ```sh
 npm install
@@ -37,18 +73,6 @@ npm run dist           # builds dist/ed-journal-tool-<version> (Linux) and .exe 
 ```
 
 Then open http://localhost:4267.
-
-### Options
-
-| Option | Default | Description |
-| --- | --- | --- |
-| `-p, --port` | `4267` | Web server port |
-| `-b, --bind` | `0.0.0.0` | Host/IP to bind (all interfaces by default) |
-| `-d, --debug` | `false` | Verbose logging |
-| `-j, --journaldir` | `%USERPROFILE%/Saved Games/Frontier Developments/Elite Dangerous` | Journal directory |
-| `--database` | `%LOCALAPPDATA%/edjt/journals.db` (`~/.local/share/edjt` on Linux) | SQLite database path |
-| `--dev-client` | `false` | Serve the dashboard from client source with Vite (hot reload); used by `npm start` |
-| `--rebuild-stats` | `false` | Clear and rebuild all stats from stored entries |
 
 ### Client development
 
