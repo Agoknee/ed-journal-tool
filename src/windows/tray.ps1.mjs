@@ -1,5 +1,6 @@
 /**
- * The PowerShell script that shows the tray icon (see tray.mjs). It's run with -EncodedCommand and
+ * The PowerShell script that shows the tray icon when tray.cs.mjs can't be compiled (see tray.mjs).
+ * It's run with -EncodedCommand and
  * gets everything from environment variables, so nothing in it is ever quoted or substituted:
  *
  *   EDJT_TRAY_TITLE       tooltip and notification title

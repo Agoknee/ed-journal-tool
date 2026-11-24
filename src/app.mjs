@@ -146,7 +146,7 @@ export async function startApp() {
         onQuit: shutDown,
         // Without its icon, a background copy would be out of sight: show the dashboard instead.
         onFailure: () => { if (isInBackground && !isShuttingDown) openInBrowser(dashboardUrl); },
-      });
+      }).catch((error) => logger.warn(`Couldn't show the tray icon: ${error.message}`));
     }
   });
 
