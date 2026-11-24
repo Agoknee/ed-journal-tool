@@ -1,9 +1,9 @@
 import { EventEmitter } from 'node:events';
 
 /**
- * Broadcasts application updates (journal changes, stats changes, scan progress, clock checks, notes, BGS ticks, BGS adjustments,
- * live ship status)
- * to listeners such as the server-sent events endpoint.
+ * Broadcasts application updates (journal changes, stats changes, scan progress, stats build
+ * progress, compression progress, clock checks, notes, BGS ticks, BGS adjustments, live ship status) to listeners such
+ * as the server-sent events endpoint.
  */
 export class EventHub extends EventEmitter {
   constructor() {
@@ -12,7 +12,7 @@ export class EventHub extends EventEmitter {
   }
 
   /**
-   * @param {'journals' | 'stats' | 'scan' | 'clock' | 'notes' | 'ticks' | 'adjustments' | 'shipStatus'} topic
+   * @param {'journals' | 'stats' | 'scan' | 'statsBuild' | 'compression' | 'clock' | 'notes' | 'ticks' | 'adjustments' | 'shipStatus'} topic
    * @param {object} payload
    */
   publish(topic, payload = {}) {

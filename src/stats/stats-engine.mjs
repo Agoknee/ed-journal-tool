@@ -6,6 +6,12 @@ import { logger } from '../logger.mjs';
 /** Journal entries are processed in id ranges of this size so the server stays responsive. */
 const ENTRY_ID_CHUNK_SIZE = 25000;
 
+/** How often, at most, build progress is sent to the dashboard. */
+const BUILD_PROGRESS_INTERVAL_MS = 1000;
+
+/** Progress while no large build is running. */
+const IDLE_BUILD_PROGRESS = Object.freeze({ isBuilding: false, totalModules: 0, completedModules: 0, currentModule: null, percent: 100 });
+
 /**
  * Bump to rebuild every module, for changes to which entries modules are given. It's added to each
  * module's own version in the stored record.
@@ -36,14 +42,23 @@ export class StatsEngine {
    * @param {import('node:sqlite').DatabaseSync} options.database
    * @param {import('./define-stat-module.mjs').StatModule[]} options.statModules
    * @param {import('../events/event-hub.mjs').EventHub} options.eventHub
+   * @param {number} [options.entryChunkSize]  entries per chunk; a module with more than one chunk
+   *   to catch up on is a large update, shown as build progress
    */
-  constructor({ database, statModules, eventHub }) {
+  constructor({ database, statModules, eventHub, entryChunkSize = ENTRY_ID_CHUNK_SIZE }) {
     this.database = database;
     this.statModules = statModules;
     this.eventHub = eventHub;
+    this.entryChunkSize = entryChunkSize;
     this.processors = new Map();
     this.runningUpdate = null;
     this.hasQueuedUpdate = false;
+    /**
+     * While stats are built or rebuilt from many entries (startup after a scan, a new or changed
+     * module, a rebuild), which module is being built and how far along it all is; sent to the
+     * dashboard as "statsBuild" updates. Small updates (new entries while playing) don't count.
+     */
+    this.buildProgress = IDLE_BUILD_PROGRESS;
 
     this.statements = {
       selectModuleRecord: database.prepare('SELECT * FROM stat_modules WHERE name = ?'),
@@ -152,27 +167,73 @@ export class StatsEngine {
   async processAllModules() {
     const { maxEntryId } = this.statements.selectMaxEntryId.get();
     const changedModuleNames = [];
+    const lastEntryIds = new Map(this.statModules.map((statModule) => [statModule.name, this.statements.selectModuleRecord.get(statModule.name).last_entry_id]));
+    const isLargeUpdate = (statModule) => maxEntryId - lastEntryIds.get(statModule.name) > this.entryChunkSize;
+    const largeUpdateCount = this.statModules.filter(isLargeUpdate).length;
+    if (largeUpdateCount > 0) this.startBuildProgress(largeUpdateCount);
 
-    for (const statModule of this.statModules) {
-      const { last_entry_id: lastEntryId } = this.statements.selectModuleRecord.get(statModule.name);
-      if (lastEntryId >= maxEntryId) continue;
+    try {
+      for (const statModule of this.statModules) {
+        const lastEntryId = lastEntryIds.get(statModule.name);
+        if (lastEntryId >= maxEntryId) continue;
 
-      const isLargeUpdate = maxEntryId - lastEntryId > ENTRY_ID_CHUNK_SIZE;
-      const startTime = Date.now();
-      if (isLargeUpdate) logger.info(`Building "${statModule.name}" stats...`);
+        const isLarge = isLargeUpdate(statModule);
+        const startTime = Date.now();
+        if (isLarge) {
+          logger.info(`Building "${statModule.name}" stats...`);
+          this.updateBuildProgress({ currentModule: { name: statModule.name, title: statModule.title }, moduleFraction: 0 }, { isForced: true });
+        }
 
-      const processedEntryCount = await this.processModuleEntries(statModule, lastEntryId, maxEntryId);
-      if (processedEntryCount > 0) changedModuleNames.push(statModule.name);
+        const onChunk = isLarge ? (moduleFraction) => this.updateBuildProgress({ moduleFraction }) : undefined;
+        const processedEntryCount = await this.processModuleEntries(statModule, lastEntryId, maxEntryId, onChunk);
+        if (processedEntryCount > 0) changedModuleNames.push(statModule.name);
 
-      const logMessage = `Stat module "${statModule.name}" processed ${processedEntryCount.toLocaleString()} entries in ${Date.now() - startTime}ms`;
-      if (isLargeUpdate) logger.info(logMessage);
-      else logger.debug(logMessage);
+        const logMessage = `Stat module "${statModule.name}" processed ${processedEntryCount.toLocaleString()} entries in ${Date.now() - startTime}ms`;
+        if (isLarge) {
+          logger.info(logMessage);
+          this.updateBuildProgress({ completedModules: this.buildProgress.completedModules + 1, moduleFraction: 0 });
+        } else {
+          logger.debug(logMessage);
+        }
+      }
+    } finally {
+      if (largeUpdateCount > 0) this.finishBuildProgress();
     }
 
     return changedModuleNames;
   }
 
-  async processModuleEntries(statModule, lastEntryId, maxEntryId) {
+  startBuildProgress(totalModules) {
+    this.buildModuleFraction = 0;
+    this.lastBuildProgressTime = 0;
+    this.buildProgress = { isBuilding: true, totalModules, completedModules: 0, currentModule: null, percent: 0 };
+    this.publishBuildProgress();
+  }
+
+  /** Updates the build progress, sending it at most every BUILD_PROGRESS_INTERVAL_MS unless forced. */
+  updateBuildProgress({ moduleFraction, ...changes }, { isForced = false } = {}) {
+    if (moduleFraction !== undefined) this.buildModuleFraction = moduleFraction;
+    const progress = { ...this.buildProgress, ...changes };
+    progress.percent = Math.min(99, Math.floor((100 * (progress.completedModules + this.buildModuleFraction)) / progress.totalModules));
+    this.buildProgress = progress;
+    if (isForced || Date.now() - this.lastBuildProgressTime >= BUILD_PROGRESS_INTERVAL_MS) this.publishBuildProgress();
+  }
+
+  finishBuildProgress() {
+    this.buildProgress = IDLE_BUILD_PROGRESS;
+    this.publishBuildProgress();
+  }
+
+  publishBuildProgress() {
+    this.lastBuildProgressTime = Date.now();
+    this.eventHub.publish('statsBuild', this.buildProgress);
+  }
+
+  /**
+   * @param {(moduleFraction: number) => void} [onChunk]  called after each chunk with how much of
+   *   this module's entries are done (0 to 1)
+   */
+  async processModuleEntries(statModule, lastEntryId, maxEntryId, onChunk) {
     const processEntry = this.processors.get(statModule.name);
     const eventPlaceholders = statModule.events.map(() => '?').join(', ');
     const selectEntries = this.database.prepare(`
@@ -186,8 +247,8 @@ export class StatsEngine {
     const entryCodec = getEntryCodec(this.database);
 
     let processedEntryCount = 0;
-    for (let chunkStartId = lastEntryId; chunkStartId < maxEntryId; chunkStartId += ENTRY_ID_CHUNK_SIZE) {
-      const chunkEndId = Math.min(chunkStartId + ENTRY_ID_CHUNK_SIZE, maxEntryId);
+    for (let chunkStartId = lastEntryId; chunkStartId < maxEntryId; chunkStartId += this.entryChunkSize) {
+      const chunkEndId = Math.min(chunkStartId + this.entryChunkSize, maxEntryId);
       const journalEntries = selectEntries.all(chunkStartId, chunkEndId, ...statModule.events)
         .filter((journalEntry) => !legacyFileIds.has(journalEntry.journalFileId));
 
@@ -205,6 +266,7 @@ export class StatsEngine {
       });
 
       processedEntryCount += journalEntries.length;
+      onChunk?.((chunkEndId - lastEntryId) / (maxEntryId - lastEntryId));
       await yieldToEventLoop();
     }
 

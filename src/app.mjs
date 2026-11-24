@@ -85,6 +85,8 @@ export async function startApp() {
   const tickMonitor = new TickMonitor({ database, eventHub });
   const statusMonitor = new StatusMonitor({ database, journalDirectories: ingester.journalDirectories, eventHub });
 
+  const compression = createCompressionProgress(eventHub);
+
   const app = createServer({
     database,
     databasePath,
@@ -95,6 +97,7 @@ export async function startApp() {
     eventHub,
     journalDirectories: ingester.journalDirectories,
     journalSearch,
+    compression,
     inaraAssetDirectory,
   });
 
@@ -162,13 +165,47 @@ export async function startApp() {
       .catch((error) => logger.warn(`Couldn't download the Inara images: ${error.message}`));
   }
   await journalMonitor.scanJournalDirectory();
-  // A new database gets its compression dictionary once the first scan has stored enough entries.
-  await compactJournalEntries(database);
+  // A new database gets its compression dictionary once the first scan has stored enough entries;
+  // then all of them are compressed, which the dashboard shows.
+  try {
+    await compactJournalEntries(database, { onProgress: compression.onProgress });
+  } finally {
+    compression.finish();
+  }
   journalMonitor.start();
   statusMonitor.start();
   if (journalSearch.status) {
     journalSearchTimer = watchForJournalFolders({ options, journalSearch, journalMonitor, statusMonitor, eventHub });
   }
+}
+
+/**
+ * Progress of compressing stored journal entries, for the dashboard: in `status` (for
+ * /api/status), and sent as "compression" updates at most every second. Only once entries are
+ * actually being compressed; checking entries that need nothing isn't shown.
+ * @param {EventHub} eventHub
+ */
+function createCompressionProgress(eventHub) {
+  const idle = { isCompressing: false, checkedCount: 0, totalCount: 0, percent: 100 };
+  let lastPublishTime = 0;
+  const progress = {
+    status: idle,
+    onProgress({ checkedCount, totalCount, compressedCount }) {
+      if (compressedCount === 0) return;
+      const isFirst = !progress.status.isCompressing;
+      progress.status = { isCompressing: true, checkedCount, totalCount, percent: Math.min(99, Math.floor((100 * checkedCount) / totalCount)) };
+      if (isFirst || Date.now() - lastPublishTime >= 1000) {
+        lastPublishTime = Date.now();
+        eventHub.publish('compression', progress.status);
+      }
+    },
+    finish() {
+      if (!progress.status.isCompressing) return;
+      progress.status = idle;
+      eventHub.publish('compression', idle);
+    },
+  };
+  return progress;
 }
 
 /**

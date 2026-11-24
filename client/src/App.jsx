@@ -274,6 +274,8 @@ export default function App() {
         </header>
         <JournalFolderBanner />
         <ScanBanner />
+        <StatsBuildBanner />
+        <CompressionBanner />
         <ClockBanner />
         <ActivePage commanderFilter={commanderFilter} commanders={commanders} />
       </main>
@@ -466,6 +468,38 @@ function ScanBanner() {
     <div className="notice notice-info">
       Scanning journals: {currentScan.processedFiles.toLocaleString()} / {currentScan.totalFiles.toLocaleString()} files
       ({currentScan.newEntries.toLocaleString()} new entries). Stats will update when the scan completes.
+    </div>
+  );
+}
+
+/**
+ * While stats are built from many entries (after the startup scan, a new or changed stat, or a
+ * rebuild): which one, and how far along. Hidden during the scan, which has its own banner.
+ */
+function StatsBuildBanner() {
+  const { scanProgress, statsBuildProgress } = useLiveUpdates();
+  const statusRequest = useApi('/api/status', {}, ['scan']);
+  const build = statsBuildProgress ?? statusRequest.data?.statsBuild;
+  const isScanning = (scanProgress ?? statusRequest.data?.scan)?.isScanning;
+  if (!build?.isBuilding || isScanning) return null;
+  return (
+    <div className="notice notice-info">
+      Building stats{build.currentModule ? `: ${build.currentModule.title}` : ''} ({build.completedModules.toLocaleString()} of{' '}
+      {build.totalModules.toLocaleString()} done, {build.percent}%). The dashboard updates when it's finished.
+    </div>
+  );
+}
+
+/** While stored journal entries are compressed (once, after the first scan on a new system). */
+function CompressionBanner() {
+  const { compressionProgress } = useLiveUpdates();
+  const statusRequest = useApi('/api/status', {}, ['scan']);
+  const compression = compressionProgress ?? statusRequest.data?.compression;
+  if (!compression?.isCompressing) return null;
+  return (
+    <div className="notice notice-info">
+      Compressing stored journal entries to save space (only done once): {compression.checkedCount.toLocaleString()} /{' '}
+      {compression.totalCount.toLocaleString()} ({compression.percent}%). The dashboard works meanwhile, if a little slower.
     </div>
   );
 }
