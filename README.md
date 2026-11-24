@@ -4,6 +4,26 @@ Watches Elite Dangerous journal files, stores every entry in SQLite (`node:sqlit
 
 Journal files are only ever opened read-only.
 
+## Features
+
+- **Stats, stats, and more stats (with more to come).** Commanders (fleet, inventory, ranks and reputation, credits, engineers), fleet carriers (details, jump history, bank history), travel, trade and markets, carrier depots, BGS activity, missions, combat and chat, across every commander in your journals.
+- **Massacre stacks.** Tracks AFK massacre stacks like OD Elite Tracker or EDMT: missions grouped by target, the kills the stack needs (as many as its largest faction asks for), progress for each faction, and the rewards. It works well for building a stack as well as running one. Wing mining missions (WMM) are tracked under Missions → Mining & Cargo too, but haven't been tested yet, as the game's WMM missions have been unreliable.
+- **A live combat panel** for AFK sessions: kills and kill rate, time since the last kill, the time left to finish the stack, and warnings for your fighter (destroyed, rebuilt, or not deployed), shields, hull, hardpoints and fuel (including whether it lasts until the stack is done).
+- **Combat history:** every session, kill, death and interdiction, with kills over time, when you fight, and who you fought.
+- **BGS reports like BGS-Tally.** Activity per system and faction, with a button that copies a Discord-ready message in BGS-Tally's ANSI format, for one commander or all of them combined. It reads the journals themselves, so nothing is missed: it doesn't matter which games were launched in which order, or whether EDJT was running at the time. Activity the journals don't record can be added as manual adjustments.
+- **BGS tick tracking,** with a tick history, and a warning when your PC's clock is off from the game server's (which throws off carrier jump and cooldown timers).
+- **One-click route planning.** Opens Spansh's Galaxy Plotter with a ship's build (SLEF) and its current system filled in; the Fleet Carrier Router with your carrier's system, type and used capacity; or the Wanderer's Toolbox Multi Waypoint Planner at its import dialog, which optimizes the route as soon as you paste a list of systems. (These need the userscript the dashboard offers to install.)
+- **Ship builds** as EDSY and Coriolis links, or SLEF to copy.
+- **Notes** on any carrier or commander.
+- **Finds your journals by itself:** the usual Windows folder, or on Linux Steam/Proton, Heroic, Lutris, Bottles and Wine folders. It can read several journal folders at once (one synced from another PC, say), and if none is found yet it keeps looking.
+- **Keeps every journal entry** in its database (compressed), so the original journal files can be deleted once they've been read.
+- **Use it from any device on your network,** phones included: the dashboard is a web page served on port 4267, so you can watch an AFK session from your phone.
+- **The Windows tray icon** opens the dashboard, shows the log, or quits. The Windows exe runs in the background with no console window.
+- **Windows and Linux.** The Linux installer adds a menu entry, and can run EDJT as a service so it keeps running in the background. That should let it work on a Steam Deck in Game Mode as well as Desktop Mode, but it hasn't been tried on one yet.
+- **Journal details and raw SQL.** Click "X active journals" at the bottom left for every journal file and its status (including corrupt or unreadable ones), the raw lines of any journal, and a tool for running read-only SQL queries on all the stored data.
+
+Downloads are on the [Releases](https://github.com/Agoknee/ed-journal-tool/releases) page: the Windows `.exe`, and the Linux installer (`sh ed-journal-tool-*-install.sh`; Steam Deck users, add `--service`).
+
 ## Setup
 
 ```sh
