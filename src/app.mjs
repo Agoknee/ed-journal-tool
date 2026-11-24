@@ -23,10 +23,15 @@ export async function startApp() {
   logger.setDebug(options.debug);
   logger.info(`Starting ED Journal Tool v${appVersion} - CTRL+C to exit...`);
 
-  if (!existsSync(options.journaldir)) {
-    logger.error(`Journal directory not found: "${options.journaldir}". Use --journaldir to set it.`);
+  // A journal folder that isn't there (a synced folder not available yet, say) is warned about and
+  // its journals left as they were; with none there at all, there's nothing to do.
+  const missingDirectories = options.journaldir.filter((directory) => !existsSync(directory));
+  if (missingDirectories.length === options.journaldir.length) {
+    const folders = options.journaldir.map((directory) => `"${directory}"`).join(', ');
+    logger.error(`Journal ${options.journaldir.length === 1 ? 'directory' : 'directories'} not found: ${folders}. Use --journaldir to set it.`);
     process.exit(1);
   }
+  for (const directory of missingDirectories) logger.warn(`Journal directory not found: "${directory}"; it will be read once it's there.`);
 
   const databasePath = path.resolve(options.database);
   logger.debug(`Opening database "${databasePath}"`);
@@ -42,11 +47,11 @@ export async function startApp() {
     statsEngine.resetAllModules();
   }
 
-  const ingester = new JournalIngester({ database, journalDirectory: options.journaldir });
+  const ingester = new JournalIngester({ database, journalDirectories: options.journaldir });
   const journalMonitor = new JournalMonitor({ ingester, statsEngine, eventHub });
   const clockMonitor = new ClockMonitor({ eventHub });
   const tickMonitor = new TickMonitor({ database, eventHub });
-  const statusMonitor = new StatusMonitor({ database, journalDirectory: options.journaldir, eventHub });
+  const statusMonitor = new StatusMonitor({ database, journalDirectories: ingester.journalDirectories, eventHub });
 
   const app = createServer({
     database,
@@ -56,7 +61,7 @@ export async function startApp() {
     clockMonitor,
     statusMonitor,
     eventHub,
-    journalDirectory: options.journaldir,
+    journalDirectories: ingester.journalDirectories,
   });
 
   const httpServer = http.createServer(app);

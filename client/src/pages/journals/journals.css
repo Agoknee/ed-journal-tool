@@ -3,3 +3,4 @@
 .raw-line { font-family: var(--font-mono); font-size: 0.8rem; }
 .raw-problem { margin-bottom: 6px; color: var(--color-danger); font-weight: 600; }
 .row-problem td { background: var(--color-danger-soft); }
+.folder-filter { max-width: 260px; text-overflow: ellipsis; }

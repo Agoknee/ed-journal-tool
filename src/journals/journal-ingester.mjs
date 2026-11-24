@@ -23,38 +23,81 @@ const FILE_CLOSING_EVENTS = new Set(['Shutdown', 'Continued']);
 /**
  * Reads journal files into the database, tracking how far each file has been read
  * and which commander it belongs to. Journal files are only ever opened read-only.
+ *
+ * Journals can come from several folders (another computer's, synced; another Windows user's). A
+ * journal is identified by its folder and file name. The same journal in two folders (a synced
+ * copy) is caught as a copy by its first entry, as a copy under another name is. Journals read
+ * before folders were recorded have folder '' and are claimed by the first folder found to hold them.
  */
 export class JournalIngester {
   /**
    * @param {object} options
    * @param {import('node:sqlite').DatabaseSync} options.database
-   * @param {string} options.journalDirectory
+   * @param {string[]} [options.journalDirectories]
+   * @param {string} [options.journalDirectory]  a single folder (the same as journalDirectories: [it])
    */
-  constructor({ database, journalDirectory }) {
+  constructor({ database, journalDirectories, journalDirectory }) {
     this.database = database;
-    this.journalDirectory = journalDirectory;
+    this.journalDirectories = normalizeJournalDirectories(journalDirectories ?? [journalDirectory]);
     this.statements = prepareStatements(database);
     this.backfillHeaderHashes();
     checkStoredEntryOrderOnce(database);
   }
 
-  async listJournalFileNames() {
-    const directoryEntries = await readdir(this.journalDirectory, { withFileTypes: true });
-    return directoryEntries
-      .filter((directoryEntry) => directoryEntry.isFile() && isJournalFileName(directoryEntry.name))
-      .map((directoryEntry) => directoryEntry.name)
-      .sort(compareJournalFileNames);
+  /**
+   * The journal files in every journal folder, oldest first. A folder that can't be read (a synced
+   * or network folder that's unavailable, say) is left out and listed in unreadableDirectories.
+   * @returns {Promise<{ files: { directory: string, fileName: string }[], unreadableDirectories: string[] }>}
+   */
+  async listJournalFiles() {
+    const files = [];
+    const unreadableDirectories = [];
+    for (const directory of this.journalDirectories) {
+      let directoryEntries;
+      try {
+        directoryEntries = await readdir(directory, { withFileTypes: true });
+      } catch (error) {
+        logger.warn(`Can't read journal folder "${directory}" (${error.code ?? error.message}); its journals are left as they were.`);
+        unreadableDirectories.push(directory);
+        continue;
+      }
+      for (const directoryEntry of directoryEntries) {
+        if (directoryEntry.isFile() && isJournalFileName(directoryEntry.name)) files.push({ directory, fileName: directoryEntry.name });
+      }
+    }
+    files.sort((first, second) => compareJournalFileNames(first.fileName, second.fileName) || first.directory.localeCompare(second.directory));
+    return { files, unreadableDirectories };
+  }
+
+  /** A journal's name for log messages: with its folder when there's more than one folder. */
+  describeFile(directory, fileName) {
+    return this.journalDirectories.length > 1 && directory ? `${fileName}" in "${directory}` : fileName;
+  }
+
+  /**
+   * The stored record for a journal file, creating it if needed. A journal read before folders
+   * were recorded (folder '') is claimed for this folder.
+   */
+  findOrCreateFileRecord(directory, fileName) {
+    const fileRecord = this.statements.selectFile.get(directory, fileName);
+    if (fileRecord) return fileRecord;
+    const unplacedRecord = this.statements.selectFile.get('', fileName);
+    if (unplacedRecord) this.statements.setFileDirectory.run(directory, unplacedRecord.id);
+    else this.statements.insertFile.run(directory, fileName, getJournalSortKey(fileName));
+    return this.statements.selectFile.get(directory, fileName);
   }
 
   /**
    * Reads any new data from a journal file.
+   * @param {string} directory  one of the journal folders
    * @param {string} fileName
    * @param {{ skipUnparseable?: boolean }} [options]
    * @returns {Promise<{ hasChanged: boolean, newEntryCount: number, needsRetry: boolean, requiresStatsRebuild: boolean }>}
    */
-  async processFile(fileName, { skipUnparseable = false } = {}) {
+  async processFile(directory, fileName, { skipUnparseable = false } = {}) {
     const result = { hasChanged: false, newEntryCount: 0, needsRetry: false, requiresStatsRebuild: false };
-    const filePath = path.join(this.journalDirectory, fileName);
+    const filePath = path.join(directory, fileName);
+    const fileLabel = this.describeFile(directory, fileName);
 
     let fileStats;
     try {
@@ -62,7 +105,7 @@ export class JournalIngester {
       fileStats = await lstat(filePath);
     } catch (error) {
       if (error.code === 'ENOENT') {
-        this.markFileMissing(fileName);
+        this.markFileMissing(directory, fileName);
         return result;
       }
       throw error;
@@ -74,29 +117,28 @@ export class JournalIngester {
     const modifiedMs = Math.trunc(fileStats.mtimeMs);
     const isSettled = Date.now() - modifiedMs > SETTLED_AFTER_MS;
 
-    let fileRecord = this.statements.selectFileByName.get(fileName);
-    if (!fileRecord) {
-      this.statements.insertFile.run(fileName, getJournalSortKey(fileName));
-      fileRecord = this.statements.selectFileByName.get(fileName);
-    }
+    let fileRecord = this.findOrCreateFileRecord(directory, fileName);
     if (fileRecord.is_missing) {
       this.statements.setFileMissing.run(0, fileRecord.id);
-      fileRecord = this.statements.selectFileByName.get(fileName);
+      fileRecord = this.statements.selectFileById.get(fileRecord.id);
     }
 
     const isUnchanged = fileRecord.file_size === fileSize && fileRecord.modified_ms === modifiedMs;
     const hasUnreadTail = fileRecord.status === 'ok' && fileRecord.bytes_read < fileSize;
     const isAwaitingCommander = fileRecord.status === 'pending';
-    if (isUnchanged && !hasUnreadTail && !isAwaitingCommander && !skipUnparseable) return result;
+    // A copy whose original has since gone from its folder was really a move (see readUnassignedFile).
+    const isCopyOfMissingJournal = fileRecord.status === 'duplicate' && fileRecord.header_hash
+      && Boolean(this.statements.selectMissingOriginal.get(fileRecord.header_hash, fileRecord.commander_id, fileRecord.id));
+    if (isUnchanged && !hasUnreadTail && !isAwaitingCommander && !isCopyOfMissingJournal && !skipUnparseable) return result;
 
     // A journal is identified by its first entry (the Fileheader, stamped with the second the game
     // started it). A different first entry means a different journal was saved under this name.
     const headerHash = await readHeaderHash(filePath);
     if (headerHash && fileRecord.header_hash && headerHash !== fileRecord.header_hash && fileRecord.status !== 'pending') {
-      logger.warn(`Journal file "${fileName}" was replaced by a different journal; re-reading it from the start.`);
+      logger.warn(`Journal file "${fileLabel}" was replaced by a different journal; re-reading it from the start.`);
       if (fileRecord.status === 'ok') result.requiresStatsRebuild = true;
       this.resetFile(fileRecord.id);
-      fileRecord = this.statements.selectFileByName.get(fileName);
+      fileRecord = this.statements.selectFileById.get(fileRecord.id);
     }
     if (headerHash && headerHash !== fileRecord.header_hash) {
       this.statements.updateHeaderHash.run(headerHash, fileRecord.id);
@@ -105,9 +147,9 @@ export class JournalIngester {
 
     // A file that shrank was rewritten; start over.
     if (fileRecord.status === 'ok' && fileSize < fileRecord.bytes_read) {
-      logger.warn(`Journal file "${fileName}" shrank; re-reading it from the start.`);
+      logger.warn(`Journal file "${fileLabel}" shrank; re-reading it from the start.`);
       this.resetFile(fileRecord.id);
-      fileRecord = this.statements.selectFileByName.get(fileName);
+      fileRecord = this.statements.selectFileById.get(fileRecord.id);
       result.requiresStatsRebuild = true;
     }
 
@@ -115,7 +157,11 @@ export class JournalIngester {
     if (fileRecord.status === 'ok') {
       Object.assign(result, await this.readAssignedFile(fileRecord, filePath, readOptions));
     } else {
-      Object.assign(result, await this.readUnassignedFile(fileRecord, filePath, readOptions));
+      const unassignedResult = await this.readUnassignedFile(fileRecord, filePath, readOptions);
+      // A journal moved here: its original record now points here, so carry on reading it from
+      // where it had got to.
+      if (unassignedResult.wasMoved) return { ...(await this.processFile(directory, fileName, { skipUnparseable })), hasChanged: true };
+      Object.assign(result, unassignedResult);
     }
 
     this.statements.updateFileSize.run(fileSize, modifiedMs, fileRecord.id);
@@ -138,7 +184,7 @@ export class JournalIngester {
 
     if (conflictingIdentity) {
       const reason = `Multiple commanders in file: ${commanderRecord.name}, ${conflictingIdentity.name}`;
-      logger.warn(`Journal file "${fileRecord.file_name}" flagged as corrupt. ${reason}`);
+      logger.warn(`Journal file "${this.describeFile(fileRecord.directory, fileRecord.file_name)}" flagged as corrupt. ${reason}`);
       this.resetFile(fileRecord.id);
       this.statements.updateFileStatus.run('corrupt', reason, null, fileRecord.id);
       return { newEntryCount: 0, needsRetry: false, requiresStatsRebuild: true };
@@ -161,7 +207,7 @@ export class JournalIngester {
       const reason = `Multiple commanders in file: ${commanderIdentities.map((identity) => identity.name).join(', ')}`;
       this.statements.updateFileStatus.run('corrupt', reason, null, fileRecord.id);
       this.updateUnassignedFileDetails(fileRecord.id, readResult, fileDetails);
-      logger.debug(`Journal file "${fileRecord.file_name}" flagged as corrupt. ${reason}`);
+      logger.debug(`Journal file "${this.describeFile(fileRecord.directory, fileRecord.file_name)}" flagged as corrupt. ${reason}`);
       return { newEntryCount: 0, needsRetry: false };
     }
 
@@ -176,25 +222,47 @@ export class JournalIngester {
     }
 
     let originalFile = null;
+    let wasMoved = false;
     runInTransaction(this.database, () => {
       const commanderId = this.upsertCommander(commanderIdentities[0]);
+      // The same journal already read for this commander (one still in its folder first).
       originalFile = fileRecord.header_hash ? this.statements.selectSameJournal.get(fileRecord.header_hash, commanderId, fileRecord.id) : null;
+      if (originalFile?.is_missing) {
+        // The original is no longer where it was, so this is it, moved or renamed (its folder
+        // renamed, say): the original's record takes this place, keeping its entries and how far
+        // it had been read, and this one goes.
+        this.statements.deleteFileEventCounts.run(fileRecord.id);
+        this.statements.deleteEntriesForFile.run(fileRecord.id);
+        this.statements.deleteFile.run(fileRecord.id);
+        this.statements.moveFile.run(fileRecord.directory, fileRecord.file_name, getJournalSortKey(fileRecord.file_name), originalFile.id);
+        wasMoved = true;
+        return;
+      }
       if (originalFile) {
-        this.statements.updateFileStatus.run('duplicate', `Same journal as ${originalFile.file_name}`, commanderId, fileRecord.id);
+        const originalLabel = originalFile.directory && originalFile.directory !== fileRecord.directory
+          ? `${originalFile.file_name} (in ${originalFile.directory})`
+          : originalFile.file_name;
+        this.statements.updateFileStatus.run('duplicate', `Same journal as ${originalLabel}`, commanderId, fileRecord.id);
         this.updateUnassignedFileDetails(fileRecord.id, readResult, fileDetails);
         return;
       }
       this.statements.updateFileStatus.run('ok', null, commanderId, fileRecord.id);
       this.storeEntries({ ...fileRecord, bytes_read: 0, line_count: 0, entry_count: 0, skipped_line_count: 0 }, commanderId, readResult);
     });
+    if (wasMoved) {
+      const isOtherFolder = originalFile.directory !== fileRecord.directory;
+      const describe = (file) => (isOtherFolder && file.directory ? `${file.file_name}" in "${file.directory}` : file.file_name);
+      logger.info(`Journal file "${describe(originalFile)}" was moved to "${describe(fileRecord)}"; reading carries on from there.`);
+      return { newEntryCount: 0, needsRetry: false, wasMoved: true };
+    }
     if (originalFile) {
-      logger.info(`Journal file "${fileRecord.file_name}" is a copy of "${originalFile.file_name}"; its entries aren't stored again.`);
+      logger.info(`Journal file "${this.describeFile(fileRecord.directory, fileRecord.file_name)}" is a copy of "${this.describeFile(originalFile.directory, originalFile.file_name)}"; its entries aren't stored again.`);
       return { newEntryCount: 0, needsRetry: false };
     }
-    logger.debug(`Journal file "${fileRecord.file_name}" assigned to CMDR ${commanderIdentities[0].name}`);
+    logger.debug(`Journal file "${this.describeFile(fileRecord.directory, fileRecord.file_name)}" assigned to CMDR ${commanderIdentities[0].name}`);
     if (isStoredOutOfOrder(this.database, fileRecord.id)) {
-      logger.info(`Journal file "${fileRecord.file_name}" is older than journals already read; entries will be put back in time order.`);
-      noteLateJournal(this.database, this.statements.selectFileByName.get(fileRecord.file_name).first_timestamp);
+      logger.info(`Journal file "${this.describeFile(fileRecord.directory, fileRecord.file_name)}" is older than journals already read; entries will be put back in time order.`);
+      noteLateJournal(this.database, this.statements.selectFileById.get(fileRecord.id).first_timestamp);
     }
 
     return { newEntryCount: readResult.parsedLines.length, needsRetry: readResult.isBlockedByBadLine };
@@ -272,26 +340,34 @@ export class JournalIngester {
   }
 
   /**
-   * Flags journals no longer in the journal folder (and clears the flag for ones that are back).
-   * Their entries and stats are kept, so tidying up old journals doesn't lose history.
-   * @param {string[]} fileNamesOnDisk
+   * Flags journals no longer in their journal folder (and clears the flag for ones that are back).
+   * Their entries and stats are kept, so tidying up old journals doesn't lose history. Each
+   * journal is checked against its own folder only; a folder that couldn't be read leaves its
+   * journals as they were, and one no longer configured counts its journals as missing. Journals
+   * not yet placed in a folder count as present while some folder has a file by that name (it's
+   * claimed when that file is read).
+   * @param {{ files: { directory: string, fileName: string }[], unreadableDirectories?: string[] }} listing
    */
-  markMissingFiles(fileNamesOnDisk) {
-    const presentFileNames = new Set(fileNamesOnDisk);
+  markMissingFiles({ files, unreadableDirectories = [] }) {
+    const presentKeys = new Set(files.map((file) => fileKey(file.directory, file.fileName)));
+    const presentNames = new Set(files.map((file) => file.fileName));
+    const unreadable = new Set(unreadableDirectories);
     runInTransaction(this.database, () => {
       for (const file of this.statements.selectFileMissingFlags.all()) {
-        const isMissing = presentFileNames.has(file.file_name) ? 0 : 1;
+        if (unreadable.has(file.directory)) continue;
+        const isPresent = file.directory === '' ? presentNames.has(file.file_name) : presentKeys.has(fileKey(file.directory, file.file_name));
+        const isMissing = isPresent ? 0 : 1;
         if (isMissing !== file.is_missing) this.statements.setFileMissing.run(isMissing, file.id);
       }
     });
   }
 
   /**
-   * Flags one journal as no longer in the journal folder.
+   * Flags one journal as no longer in its journal folder.
    * @returns {boolean} whether it was newly flagged
    */
-  markFileMissing(fileName) {
-    const fileRecord = this.statements.selectFileByName.get(fileName);
+  markFileMissing(directory, fileName) {
+    const fileRecord = this.statements.selectFile.get(directory, fileName);
     if (!fileRecord || fileRecord.is_missing) return false;
     this.statements.setFileMissing.run(1, fileRecord.id);
     return true;
@@ -323,7 +399,7 @@ export class JournalIngester {
    * Recalculates which journal files are currently being written by the game.
    * A file is active when it hasn't been closed (Shutdown/Continued), was modified recently,
    * and is the newest file for its commander (or hasn't been assigned to a commander yet).
-   * @returns {{ activeFileIds: number[], staleFileNames: string[] }}
+   * @returns {{ activeFileIds: number[], staleFiles: { directory: string, fileName: string }[] }}
    */
   refreshActiveFiles() {
     const recentCutoffMs = Date.now() - ACTIVE_WINDOW_MS;
@@ -349,15 +425,16 @@ export class JournalIngester {
     });
 
     // Pending files that stopped changing need re-checking so they can be flagged as corrupt.
-    const staleFileNames = this.statements
+    const staleFiles = this.statements
       .selectStalePendingFiles.all(Date.now() - SETTLED_AFTER_MS)
-      .map((file) => file.file_name);
+      .map((file) => ({ directory: file.directory, fileName: file.file_name }));
 
-    return { activeFileIds: activeFileIds.sort((first, second) => first - second), staleFileNames };
+    return { activeFileIds: activeFileIds.sort((first, second) => first - second), staleFiles };
   }
 
-  getActiveFileNames() {
-    return this.statements.selectActiveFileNames.all().map((file) => file.file_name);
+  /** The journal files the game is writing to now. */
+  getActiveFiles() {
+    return this.statements.selectActiveFiles.all().map((file) => ({ directory: file.directory, fileName: file.file_name }));
   }
 }
 
@@ -389,6 +466,30 @@ async function readHeaderHash(filePath) {
       // not an entry; keep looking
     }
   }
+}
+
+/** A key for a journal file: its folder and name. */
+export function fileKey(directory, fileName) {
+  return `${directory}|${fileName}`;
+}
+
+/**
+ * The journal folders, as absolute paths, without repeats (paths differing only in letter case
+ * count as the same folder on Windows).
+ * @param {(string|undefined)[]} directories
+ */
+export function normalizeJournalDirectories(directories) {
+  const seen = new Set();
+  const normalized = [];
+  for (const directory of directories) {
+    if (!directory) continue;
+    const resolved = path.resolve(directory);
+    const key = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    normalized.push(resolved);
+  }
+  return normalized;
 }
 
 function hashHeaderLine(lineText) {
@@ -457,8 +558,10 @@ function summarizeFileDetails(parsedLines, fileRecord) {
 
 function prepareStatements(database) {
   return {
-    selectFileByName: database.prepare('SELECT * FROM journal_files WHERE file_name = ?'),
-    insertFile: database.prepare('INSERT INTO journal_files (file_name, sort_key) VALUES (?, ?)'),
+    selectFile: database.prepare('SELECT * FROM journal_files WHERE directory = ? AND file_name = ?'),
+    selectFileById: database.prepare('SELECT * FROM journal_files WHERE id = ?'),
+    insertFile: database.prepare('INSERT INTO journal_files (directory, file_name, sort_key) VALUES (?, ?, ?)'),
+    setFileDirectory: database.prepare('UPDATE journal_files SET directory = ? WHERE id = ?'),
     updateFileSize: database.prepare(`
       UPDATE journal_files
       SET file_size = ?, modified_ms = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
@@ -467,13 +570,20 @@ function prepareStatements(database) {
     updateFileStatus: database.prepare('UPDATE journal_files SET status = ?, status_reason = ?, commander_id = ? WHERE id = ?'),
     updateHeaderHash: database.prepare('UPDATE journal_files SET header_hash = ? WHERE id = ?'),
     selectSameJournal: database.prepare(`
-      SELECT id, file_name FROM journal_files
+      SELECT id, directory, file_name, is_missing FROM journal_files
       WHERE header_hash = ? AND commander_id = ? AND id != ? AND status = 'ok'
-      ORDER BY id LIMIT 1
+      ORDER BY is_missing, id LIMIT 1
     `),
+    selectMissingOriginal: database.prepare(`
+      SELECT id FROM journal_files
+      WHERE header_hash = ? AND commander_id = ? AND id != ? AND status = 'ok' AND is_missing = 1
+      LIMIT 1
+    `),
+    moveFile: database.prepare('UPDATE journal_files SET directory = ?, file_name = ?, sort_key = ?, is_missing = 0 WHERE id = ?'),
+    deleteFile: database.prepare('DELETE FROM journal_files WHERE id = ?'),
     selectFilesWithoutHeaderHash: database.prepare("SELECT id FROM journal_files WHERE header_hash IS NULL AND status = 'ok'"),
     selectFirstEntry: database.prepare('SELECT data FROM journal_entries WHERE journal_file_id = ? ORDER BY line_number LIMIT 1'),
-    selectFileMissingFlags: database.prepare('SELECT id, file_name, is_missing FROM journal_files'),
+    selectFileMissingFlags: database.prepare('SELECT id, directory, file_name, is_missing FROM journal_files'),
     setFileMissing: database.prepare('UPDATE journal_files SET is_missing = ?1, is_active = is_active * (1 - ?1) WHERE id = ?2'),
     updateFileProgress: database.prepare(`
       UPDATE journal_files SET
@@ -523,9 +633,9 @@ function prepareStatements(database) {
       SELECT id, commander_id, status, sort_key FROM journal_files
       WHERE is_closed = 0 AND is_legacy = 0 AND is_missing = 0 AND status IN ('ok', 'pending') AND modified_ms >= ?
     `),
-    selectStalePendingFiles: database.prepare("SELECT file_name FROM journal_files WHERE status = 'pending' AND modified_ms < ?"),
+    selectStalePendingFiles: database.prepare("SELECT directory, file_name FROM journal_files WHERE status = 'pending' AND is_missing = 0 AND directory != '' AND modified_ms < ?"),
     clearActiveFlags: database.prepare('UPDATE journal_files SET is_active = 0 WHERE is_active = 1'),
     setActiveFlag: database.prepare('UPDATE journal_files SET is_active = 1 WHERE id = ?'),
-    selectActiveFileNames: database.prepare('SELECT file_name FROM journal_files WHERE is_active = 1'),
+    selectActiveFiles: database.prepare("SELECT directory, file_name FROM journal_files WHERE is_active = 1 AND directory != ''"),
   };
 }

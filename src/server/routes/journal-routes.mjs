@@ -3,6 +3,7 @@ import path from 'node:path';
 import { Router } from 'express';
 import { getEntryCodec } from '../../database/entry-compression.mjs';
 import { isJournalFileName } from '../../journals/journal-files.mjs';
+import { normalizeJournalDirectories } from '../../journals/journal-ingester.mjs';
 import {
   SqlFilter, addStandardFilters, getCommanderIdFilter, getOrderByClause, getPagination, runPaginatedQuery,
 } from '../../stats/query-helpers.mjs';
@@ -14,10 +15,11 @@ const COMMANDER_IDENTITY_EVENTS = new Set(['Commander', 'LoadGame', 'NewCommande
 /**
  * Routes for commanders and journal files.
  * @param {import('node:sqlite').DatabaseSync} database
- * @param {{ journalDirectory?: string }} [options]
+ * @param {{ journalDirectories?: string[], journalDirectory?: string }} [options]  the journal folders (or one)
  */
-export function createJournalRoutes(database, { journalDirectory } = {}) {
+export function createJournalRoutes(database, { journalDirectories, journalDirectory } = {}) {
   const router = Router();
+  const configuredDirectories = normalizeJournalDirectories(journalDirectories ?? [journalDirectory]);
 
   // GET /api/commanders -> basic commander list (used for commander selectors)
   router.get('/commanders', (request, response) => {
@@ -70,10 +72,24 @@ export function createJournalRoutes(database, { journalDirectory } = {}) {
       GROUP BY journal_file_events.event ORDER BY entry_count DESC, journal_file_events.event
     `).all(commanderIdFilter);
 
-    response.json({ summary, activeFiles, topEvents });
+    // The journal folders being read, with how many journals each holds (and how many are no
+    // longer there). Journals read before folders were recorded that no folder has turned out to
+    // hold are counted as unplaced.
+    const countsByDirectory = new Map(database.prepare(`
+      SELECT directory, COUNT(*) AS file_count, COALESCE(SUM(is_missing), 0) AS missing_count
+      FROM journal_files WHERE ?1 IS NULL OR commander_id = ?1 GROUP BY directory
+    `).all(commanderIdFilter).map((row) => [row.directory, row]));
+    const folders = configuredDirectories.map((directory) => ({
+      directory,
+      fileCount: countsByDirectory.get(directory)?.file_count ?? 0,
+      missingCount: countsByDirectory.get(directory)?.missing_count ?? 0,
+    }));
+    const unplacedFileCount = countsByDirectory.get('')?.file_count ?? 0;
+
+    response.json({ summary, activeFiles, topEvents, folders, unplacedFileCount });
   });
 
-  // GET /api/journals?commander=&status=ok|pending|corrupt&active=true&search=&period=&sort=&order=&limit=&offset=
+  // GET /api/journals?commander=&status=ok|pending|corrupt|duplicate|missing&active=true&folder=&search=&period=&sort=&order=&limit=&offset=
   router.get('/journals', (request, response) => {
     const sqlFilter = addStandardFilters(new SqlFilter(), request.query, {
       commanderColumn: 'journal_files.commander_id',
@@ -83,6 +99,7 @@ export function createJournalRoutes(database, { journalDirectory } = {}) {
     if (['ok', 'pending', 'corrupt', 'duplicate'].includes(request.query.status)) sqlFilter.add('journal_files.status = ?', request.query.status);
     if (request.query.status === 'missing') sqlFilter.add('journal_files.is_missing = 1');
     if (request.query.active === 'true') sqlFilter.add('journal_files.is_active = 1');
+    if (typeof request.query.folder === 'string' && request.query.folder !== '') sqlFilter.add('journal_files.directory = ?', request.query.folder);
 
     response.json(runPaginatedQuery(database, {
       selectSql: `
@@ -120,15 +137,20 @@ export function createJournalRoutes(database, { journalDirectory } = {}) {
   // The file's lines as they are on disk right now (read-only), for files whose entries aren't
   // stored: each line with its event, the commander it names, and why it can't be read.
   router.get('/journals/:fileId/raw', async (request, response) => {
-    const journalFile = database.prepare('SELECT file_name FROM journal_files WHERE id = ?').get(Number(request.params.fileId));
-    if (!journalFile || !journalDirectory || !isJournalFileName(journalFile.file_name)) {
+    const journalFile = database.prepare('SELECT directory, file_name FROM journal_files WHERE id = ?').get(Number(request.params.fileId));
+    if (!journalFile || !isJournalFileName(journalFile.file_name)) {
       response.status(404).json({ error: 'Unknown journal file.' });
       return;
     }
+    // Only from a configured journal folder: the one the ingester recorded for this journal.
+    if (!configuredDirectories.includes(journalFile.directory)) {
+      response.status(404).json({ error: 'The file is no longer in any of the journal folders.' });
+      return;
+    }
 
-    // Only a known journal's file, by the name the ingester recorded (never anything from the
-    // request), directly in the journal folder, and only a regular file (links aren't followed).
-    const filePath = path.join(journalDirectory, path.basename(journalFile.file_name));
+    // Only a known journal's file, by the folder and name the ingester recorded (never anything
+    // from the request), directly in that folder, and only a regular file (links aren't followed).
+    const filePath = path.join(journalFile.directory, path.basename(journalFile.file_name));
     let fileStats;
     let fileText;
     try {

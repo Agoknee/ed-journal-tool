@@ -121,9 +121,9 @@ test('the raw view only reads known journals in the journal folder, never anothe
       context.diagnostic(`symbolic link part skipped: ${error.code} (creating links needs Developer Mode or admin on Windows)`);
       return;
     }
-    await fixture.ingester.processFile(linkName);
+    await fixture.ingester.processFile(fixture.journalDirectory, linkName);
     assert.equal(fixture.database.prepare('SELECT COUNT(*) AS n FROM journal_files WHERE file_name = ?').get(linkName).n, 0, 'the link was not read');
-    fixture.database.prepare("INSERT INTO journal_files (file_name, sort_key, status) VALUES (?, 'x', 'corrupt')").run(linkName);
+    fixture.database.prepare("INSERT INTO journal_files (directory, file_name, sort_key, status) VALUES (?, ?, 'x', 'corrupt')").run(fixture.journalDirectory, linkName);
     const linkId = fixture.database.prepare('SELECT id FROM journal_files WHERE file_name = ?').get(linkName).id;
     const { status, text } = await get(`/api/journals/${linkId}/raw`);
     assert.equal(status, 404);

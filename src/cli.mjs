@@ -20,9 +20,38 @@ const defaultJournalDirectory = path.join(
 
 const defaultDatabasePath = path.join(dataDirectoryPath, 'journals.db');
 
+// Several journal folders can be given in one -j value: ";" separates them everywhere, and ":" too
+// where paths can't contain it (not Windows, where it's in drive letters).
+const JOURNAL_DIRECTORY_SEPARATOR = process.platform === 'win32' ? /;/ : /[;:]/;
+const JOURNAL_DIRECTORY_SEPARATOR_LABEL = process.platform === 'win32' ? ';' : '; or :';
+
+/**
+ * The journal folders from the -j values: split on the separators, made absolute, without blanks
+ * or repeats (letter case aside on Windows).
+ * @param {string[]} values
+ * @returns {string[]}
+ */
+export function splitJournalDirectories(values) {
+  const seen = new Set();
+  const directories = [];
+  for (const value of [values].flat()) {
+    for (const part of String(value ?? '').split(JOURNAL_DIRECTORY_SEPARATOR)) {
+      const trimmed = part.trim();
+      if (!trimmed) continue;
+      const resolved = path.resolve(trimmed);
+      const key = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      directories.push(resolved);
+    }
+  }
+  if (directories.length === 0) throw new Error('No journal folder given for --journaldir');
+  return directories;
+}
+
 /**
  * Parses command-line options.
- * @returns {{ port: number, bind: string, debug: boolean, journaldir: string, database: string, devClient: boolean, rebuildStats: boolean }}
+ * @returns {{ port: number, bind: string, debug: boolean, journaldir: string[], database: string, devClient: boolean, rebuildStats: boolean }}
  */
 export function parseCommandLineOptions(argv = process.argv) {
   return yargs(hideBin(argv))
@@ -49,8 +78,11 @@ export function parseCommandLineOptions(argv = process.argv) {
     .option('journaldir', {
       alias: 'j',
       type: 'string',
-      default: defaultJournalDirectory,
-      describe: 'Elite Dangerous journal directory',
+      array: true,
+      default: [defaultJournalDirectory],
+      defaultDescription: '"Saved Games/Frontier Developments/Elite Dangerous" in your user folder',
+      describe: `Elite Dangerous journal folder. Repeat it (-j A -j B), or separate folders with "${JOURNAL_DIRECTORY_SEPARATOR_LABEL}", to read several (e.g. one synced from another computer)`,
+      coerce: splitJournalDirectories,
     })
     .option('database', {
       type: 'string',

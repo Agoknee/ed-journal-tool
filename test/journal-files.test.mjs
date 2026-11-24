@@ -187,19 +187,19 @@ test('a removed journal keeps its entries, stops being active, and is unflagged 
 
     copyFileSync(filePath, `${filePath}.bak`);
     rmSync(filePath);
-    assert.equal(fixture.ingester.markFileMissing(fileName), true);
+    assert.equal(fixture.ingester.markFileMissing(fixture.journalDirectory, fileName), true);
     fixture.ingester.refreshActiveFiles();
     assert.equal(fileRow(fixture, fileName).is_missing, 1);
     assert.equal(fileRow(fixture, fileName).is_active, 0);
     assert.equal(count(fixture, 'SELECT COUNT(*) AS n FROM journal_entries'), 4);
 
     // A scan finds the same thing, and finds it again once the file is back.
-    fixture.ingester.markMissingFiles(await fixture.ingester.listJournalFileNames());
+    fixture.ingester.markMissingFiles(await fixture.ingester.listJournalFiles());
     assert.equal(fileRow(fixture, fileName).is_missing, 1);
     copyFileSync(`${filePath}.bak`, filePath);
     utimesSync(filePath, now, now);
     rmSync(`${filePath}.bak`);
-    fixture.ingester.markMissingFiles(await fixture.ingester.listJournalFileNames());
+    fixture.ingester.markMissingFiles(await fixture.ingester.listJournalFiles());
     assert.equal(fileRow(fixture, fileName).is_missing, 0);
     await fixture.build();
     assert.equal(count(fixture, 'SELECT COUNT(*) AS n FROM journal_entries'), 4, 'nothing read twice');

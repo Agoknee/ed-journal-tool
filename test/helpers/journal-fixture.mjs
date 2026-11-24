@@ -28,13 +28,19 @@ export function sessionStart({ commander = 'TESTER', fid = 'F1', gameVersion = '
   ];
 }
 
-export async function createFixture() {
+/**
+ * @param {{ folderCount?: number }} [options]  folderCount: how many journal folders to read (journals, journals-2, ...)
+ */
+export async function createFixture({ folderCount = 1 } = {}) {
   const directory = mkdtempSync(path.join(tmpdir(), 'edjt-test-'));
-  const journalDirectory = path.join(directory, 'journals');
-  mkdirSync(journalDirectory);
+  const folders = Array.from({ length: folderCount }, (unused, index) => path.join(directory, index === 0 ? 'journals' : `journals-${index + 1}`));
+  for (const folder of folders) mkdirSync(folder);
   const databasePath = path.join(directory, 'test.db');
   const database = openDatabase(databasePath);
-  const ingester = new JournalIngester({ database, journalDirectory });
+  const ingester = new JournalIngester({ database, journalDirectories: folders });
+  // As the ingester records them (absolute and normalized).
+  const journalDirectories = ingester.journalDirectories;
+  const journalDirectory = journalDirectories[0];
   const statsEngine = new StatsEngine({ database, statModules, eventHub: { publish() {} } });
   statsEngine.initialize();
   let fileCounter = 0;
@@ -45,13 +51,17 @@ export async function createFixture() {
     databasePath,
     statsEngine,
     journalDirectory,
+    journalDirectories,
     ingester,
 
-    /** Writes a journal file (current-format name, in order of writing) and returns its name. */
-    writeJournal(events, { fileName } = {}) {
+    /**
+     * Writes a journal file (current-format name, in order of writing) and returns its name.
+     * directory: which journal folder (the first by default)
+     */
+    writeJournal(events, { fileName, directory: folder = journalDirectory } = {}) {
       fileCounter += 1;
       const name = fileName ?? `Journal.2026-01-01T${String(fileCounter).padStart(6, '0')}.01.log`;
-      const filePath = path.join(journalDirectory, name);
+      const filePath = path.join(folder, name);
       writeFileSync(filePath, events.map((entry) => JSON.stringify(entry)).join('\r\n') + '\r\n');
       // Old enough to count as finished, so every line is read.
       const settled = new Date(Date.now() - SETTLED_AGE_MS);
@@ -63,8 +73,10 @@ export async function createFixture() {
     async build() {
       // As the journal monitor does.
       let needsStatsRebuild = false;
-      for (const fileName of await ingester.listJournalFileNames()) {
-        if ((await ingester.processFile(fileName)).requiresStatsRebuild) needsStatsRebuild = true;
+      const listing = await ingester.listJournalFiles();
+      ingester.markMissingFiles(listing);
+      for (const file of listing.files) {
+        if ((await ingester.processFile(file.directory, file.fileName)).requiresStatsRebuild) needsStatsRebuild = true;
       }
       if (ingester.restoreEntryOrderIfNeeded()) needsStatsRebuild = true;
       if (needsStatsRebuild) statsEngine.resetAllModules();

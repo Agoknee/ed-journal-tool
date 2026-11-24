@@ -4,7 +4,7 @@ import DataTable from '../components/DataTable.jsx';
 import FilterBar from '../components/FilterBar.jsx';
 import SearchInput from '../components/SearchInput.jsx';
 import { useListFilters, useTableState } from '../hooks/use-list-filters.js';
-import { Badge, LoadingState, Section, StatCard, StatGrid } from '../components/ui.jsx';
+import { Badge, LoadingState, Section, StatCard, StatGrid, StatGroupCard } from '../components/ui.jsx';
 import { useApi } from '../hooks/use-api.js';
 import { formatBytes, formatDateTime, formatNumber, formatRelativeTime } from '../format.js';
 import RawJournalLines from './journals/RawJournalLines.jsx';
@@ -50,14 +50,42 @@ export default function JournalsPage({ commanderFilter }) {
 
 const EVENTS_PER_PAGE = 10;
 
+/** "1 journal", "3,911 journals". */
+function formatJournalCount(count) {
+  return `${formatNumber(count)} ${count === 1 ? 'journal' : 'journals'}`;
+}
+
+/** A journal folder's short name, by its place in the list of folders ("Folder 1"); hover shows the path. */
+function folderLabel(index) {
+  return `Folder ${index + 1}`;
+}
+
 function JournalSummarySection({ commanderFilter, onSelectFile }) {
   const summaryRequest = useApi('/api/journals/summary', { commander: commanderFilter }, JOURNAL_TOPICS);
   return (
     <LoadingState requestState={summaryRequest}>
-      {({ summary, activeFiles, topEvents }) => (
+      {({ summary, activeFiles, topEvents, folders = [], unplacedFileCount = 0 }) => (
         <>
           <Section title="Overview">
             <StatGrid>
+              {folders.length > 1 && (
+                <StatGroupCard
+                  label="Journal folders"
+                  value={formatNumber(folders.length)}
+                  rows={[
+                    ...folders.map((folder, index) => ({
+                      label: folderLabel(index),
+                      value: formatJournalCount(folder.fileCount),
+                      title: `${folder.directory}${folder.missingCount ? ` (${formatNumber(folder.missingCount)} no longer there)` : ''}`,
+                    })),
+                    unplacedFileCount > 0 && {
+                      label: 'In no folder',
+                      value: formatJournalCount(unplacedFileCount),
+                      title: 'Read before folders were recorded, and not found in any of these folders; their entries are kept',
+                    },
+                  ]}
+                />
+              )}
               <StatCard label="Journal files" value={formatNumber(summary.total_files)} detail={formatBytes(summary.total_bytes)} />
               <StatCard label="Active" value={formatNumber(summary.active_files)} tone={summary.active_files > 0 ? 'live' : undefined} />
               <StatCard label="Parsed" value={formatNumber(summary.ok_files)} detail={summary.missing_files ? `${formatNumber(summary.missing_files)} no longer in the folder` : null} />
@@ -100,7 +128,13 @@ function JournalFilesSection({ commanderFilter, onSelectFile }) {
   const { filters, updateFilter, queryParams } = useListFilters();
   const [status, setStatus] = useState('');
   const [isActiveOnly, setIsActiveOnly] = useState(false);
-  const filterParams = { commander: commanderFilter, ...queryParams, status, active: isActiveOnly };
+  const [folder, setFolder] = useState('');
+  // The journal folders (shared with the overview's request); with more than one, files show theirs.
+  const summaryRequest = useApi('/api/journals/summary', { commander: commanderFilter }, JOURNAL_TOPICS);
+  const folders = summaryRequest.data?.folders ?? [];
+  const hasFolders = folders.length > 1;
+  const folderIndex = new Map(folders.map((entry, index) => [entry.directory, index]));
+  const filterParams = { commander: commanderFilter, ...queryParams, status, active: isActiveOnly, folder: hasFolders ? folder : '' };
   const tableState = useTableState({ tableId: 'journals.files', defaultSort: 'file', pageSize: 25, resetKey: JSON.stringify(filterParams) });
   const filesRequest = useApi('/api/journals', { ...filterParams, ...tableState.queryParams }, JOURNAL_TOPICS);
 
@@ -115,6 +149,12 @@ function JournalFilesSection({ commanderFilter, onSelectFile }) {
           <option value="duplicate">Copies</option>
           <option value="missing">No Longer in Folder</option>
         </select>
+        {hasFolders && (
+          <select className="folder-filter" value={folder} onChange={(changeEvent) => setFolder(changeEvent.target.value)} aria-label="Journal folder" title={folder || undefined}>
+            <option value="">All Folders</option>
+            {folders.map((entry, index) => <option key={entry.directory} value={entry.directory}>{folderLabel(index)}: {entry.directory}</option>)}
+          </select>
+        )}
         <label className="checkbox">
           <input type="checkbox" checked={isActiveOnly} onChange={(changeEvent) => setIsActiveOnly(changeEvent.target.checked)} />
           Active Only
@@ -139,6 +179,13 @@ function JournalFilesSection({ commanderFilter, onSelectFile }) {
               </>
             ),
           },
+          ...(hasFolders ? [{
+            key: 'directory',
+            label: 'Folder',
+            render: (file) => (folderIndex.has(file.directory)
+              ? <span title={file.directory}>{folderLabel(folderIndex.get(file.directory))}</span>
+              : <span className="muted" title={file.directory || 'Read before folders were recorded, and not found in any of the journal folders'}>{file.directory ? 'Other' : 'None'}</span>),
+          }] : []),
           { key: 'status', label: 'Status', render: (file) => <Badge tone={STATUS_TONES[file.status]} title={file.status_reason ?? ''}>{STATUS_LABELS[file.status] ?? file.status}</Badge> },
           { key: 'commander_name', label: 'Commander', render: (file) => file.commander_name ?? <span className="muted">{file.status_reason}</span> },
           { key: 'entry_count', label: 'Entries', align: 'right', sortKey: 'entries' },

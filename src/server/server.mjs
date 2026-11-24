@@ -18,9 +18,9 @@ import { createSqlRoutes } from './routes/sql-routes.mjs';
  * @param {import('../journals/journal-monitor.mjs').JournalMonitor} options.journalMonitor
  * @param {import('../journals/status-monitor.mjs').StatusMonitor} options.statusMonitor
  * @param {import('../events/event-hub.mjs').EventHub} options.eventHub
- * @param {string} options.journalDirectory
+ * @param {string[]} options.journalDirectories
  */
-export function createServer({ database, databasePath, statsEngine, journalMonitor, clockMonitor, statusMonitor, eventHub, journalDirectory }) {
+export function createServer({ database, databasePath, statsEngine, journalMonitor, clockMonitor, statusMonitor, eventHub, journalDirectories }) {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '1mb' }));
@@ -37,7 +37,7 @@ export function createServer({ database, databasePath, statsEngine, journalMonit
 
   apiRouter.get('/status', (request, response) => {
     response.json({
-      journalDirectory,
+      journalDirectories,
       databasePath,
       startedAt: serverStartedAt,
       scan: journalMonitor.scanProgress,
@@ -52,7 +52,7 @@ export function createServer({ database, databasePath, statsEngine, journalMonit
     response.json(statusMonitor.getStatus());
   });
 
-  apiRouter.use('/', createJournalRoutes(database, { journalDirectory }));
+  apiRouter.use('/', createJournalRoutes(database, { journalDirectories }));
   apiRouter.use('/sql', createSqlRoutes(databasePath, database));
   apiRouter.use('/events', createEventRoutes(eventHub));
   apiRouter.use('/', createNoteRoutes(database, eventHub));

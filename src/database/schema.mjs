@@ -1,20 +1,13 @@
 /**
- * Core tables: commanders -> journal files -> journal entries.
- * Stat modules create their own tables (see src/stats).
+ * The journal_files table, under the given name (the migration builds it under another name first).
+ * A journal is identified by its folder and file name, so several journal folders can be read.
  */
-export const coreSchemaSql = `
-  CREATE TABLE IF NOT EXISTS commanders (
-    id              INTEGER PRIMARY KEY,
-    commander_key   TEXT NOT NULL UNIQUE,  -- FID when available, otherwise "name:<Name>"
-    fid             TEXT,
-    name            TEXT NOT NULL,
-    first_seen      TEXT,
-    last_seen       TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS journal_files (
+export function journalFilesTableSql(tableName = 'journal_files') {
+  return `
+  CREATE TABLE IF NOT EXISTS ${tableName} (
     id                  INTEGER PRIMARY KEY,
-    file_name           TEXT NOT NULL UNIQUE,
+    directory           TEXT NOT NULL DEFAULT '',  -- the journal folder it's in; '' for one read before folders were recorded, until it's found
+    file_name           TEXT NOT NULL,
     sort_key            TEXT NOT NULL,          -- chronological key derived from the file name
     commander_id        INTEGER REFERENCES commanders(id),
     status              TEXT NOT NULL DEFAULT 'pending',  -- ok | pending | corrupt | duplicate (a copy of another journal)
@@ -34,13 +27,38 @@ export const coreSchemaSql = `
     is_legacy           INTEGER NOT NULL DEFAULT 0,  -- written by the Legacy (3.x) game client
     is_closed           INTEGER NOT NULL DEFAULT 0,  -- ended with Shutdown/Continued
     is_active           INTEGER NOT NULL DEFAULT 0,
-    is_missing          INTEGER NOT NULL DEFAULT 0,  -- no longer in the journal folder (entries are kept)
+    is_missing          INTEGER NOT NULL DEFAULT 0,  -- no longer in its journal folder (entries are kept)
     header_hash         TEXT,                        -- fingerprint of the first entry, which identifies the journal
     created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-  );
+    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    UNIQUE (directory, file_name)
+  );`;
+}
+
+/** The journal_files indexes (recreated after the table is rebuilt by a migration). */
+export const journalFilesIndexesSql = `
   CREATE INDEX IF NOT EXISTS idx_journal_files_commander ON journal_files(commander_id);
   CREATE INDEX IF NOT EXISTS idx_journal_files_sort ON journal_files(sort_key);
+  CREATE INDEX IF NOT EXISTS idx_journal_files_name ON journal_files(file_name);
+  CREATE INDEX IF NOT EXISTS idx_journal_files_header ON journal_files(header_hash);
+`;
+
+/**
+ * Core tables: commanders -> journal files -> journal entries.
+ * Stat modules create their own tables (see src/stats).
+ */
+export const coreSchemaSql = `
+  CREATE TABLE IF NOT EXISTS commanders (
+    id              INTEGER PRIMARY KEY,
+    commander_key   TEXT NOT NULL UNIQUE,  -- FID when available, otherwise "name:<Name>"
+    fid             TEXT,
+    name            TEXT NOT NULL,
+    first_seen      TEXT,
+    last_seen       TEXT
+  );
+
+  ${journalFilesTableSql()}
+  ${journalFilesIndexesSql}
 
   CREATE TABLE IF NOT EXISTS journal_entries (
     id               INTEGER PRIMARY KEY,

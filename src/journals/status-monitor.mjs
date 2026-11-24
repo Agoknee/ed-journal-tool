@@ -2,16 +2,18 @@ import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { logger } from '../logger.mjs';
 import { getCreditSummaries } from '../stats/modules/credits.mjs';
+import { normalizeJournalDirectories } from './journal-ingester.mjs';
 
 /**
  * Reads the game's Status.json (read-only), which it rewrites about once a second while playing
  * with the ship's live state: hardpoints, shields, fuel and more. The journal doesn't log most of
  * this.
  *
- * Every game client on the machine writes the same Status.json, and the file doesn't say which
- * commander it's for, so each write is matched to a commander:
+ * Each journal folder has its own Status.json, read separately. Every game client using a folder
+ * writes the same Status.json, and the file doesn't say which commander it's for, so each write is
+ * matched to a commander playing from that folder (one whose active journal is in it):
  *
- * - With one active journal, every write is that commander's.
+ * - With one active journal there, every write is that commander's.
  * - With more, each write is compared with what's known of each playing commander: the credit
  *   balance (exact), the fuel (it only falls slowly between writes, and matches the journal's
  *   ReservoirReplenished readings), the cargo tonnage, and whose journal was written in the same
@@ -67,15 +69,18 @@ const FLAG_BITS = {
 
 export class StatusMonitor {
   /**
-   * @param {{ database: import('node:sqlite').DatabaseSync, journalDirectory: string, eventHub: import('../events/event-hub.mjs').EventHub }} options
+   * @param {{ database: import('node:sqlite').DatabaseSync, journalDirectories?: string[], journalDirectory?: string, eventHub: import('../events/event-hub.mjs').EventHub }} options
    */
-  constructor({ database, journalDirectory, eventHub }) {
+  constructor({ database, journalDirectories, journalDirectory, eventHub }) {
     this.database = database;
-    this.journalDirectory = journalDirectory;
-    this.statusPath = path.join(journalDirectory, STATUS_FILE_NAME);
+    /** Each journal folder's Status.json, and when it was last read. */
+    this.statusFiles = normalizeJournalDirectories(journalDirectories ?? [journalDirectory]).map((directory) => ({
+      directory,
+      statusPath: path.join(directory, STATUS_FILE_NAME),
+      lastModifiedMs: 0,
+    }));
     this.eventHub = eventHub;
     this.timer = null;
-    this.lastModifiedMs = 0;
     this.lastFuelPublishMs = 0;
     /**
      * Per commander id: the latest write matched to them and what it tells us about them.
@@ -83,7 +88,7 @@ export class StatusMonitor {
      */
     this.commanders = new Map();
     this.selectPlayingCommanders = database.prepare(`
-      SELECT commanders.id, commanders.name, journal_files.file_name FROM journal_files
+      SELECT commanders.id, commanders.name, journal_files.directory, journal_files.file_name FROM journal_files
       JOIN commanders ON commanders.id = journal_files.commander_id
       WHERE journal_files.is_active = 1 ORDER BY journal_files.modified_ms DESC
     `);
@@ -101,18 +106,23 @@ export class StatusMonitor {
 
   async poll() {
     this.settleFlags();
-    const fileStats = await stat(this.statusPath).catch(() => null);
-    if (!fileStats || fileStats.mtimeMs === this.lastModifiedMs) return;
+    for (const statusFile of this.statusFiles) await this.pollStatusFile(statusFile);
+  }
+
+  /** Reads one journal folder's Status.json if it has been written since the last read. */
+  async pollStatusFile(statusFile) {
+    const fileStats = await stat(statusFile.statusPath).catch(() => null);
+    if (!fileStats || fileStats.mtimeMs === statusFile.lastModifiedMs) return;
     let raw;
     try {
       // The game rewrites the file in place, so a read can catch it half-written; the next poll retries.
-      raw = JSON.parse(await readFile(this.statusPath, 'utf8'));
+      raw = JSON.parse(await readFile(statusFile.statusPath, 'utf8'));
     } catch {
       return;
     }
-    this.lastModifiedMs = fileStats.mtimeMs;
+    statusFile.lastModifiedMs = fileStats.mtimeMs;
 
-    const match = await this.matchCommander(raw, fileStats.mtimeMs);
+    const match = await this.matchCommander(raw, fileStats.mtimeMs, statusFile.directory);
     if (!match) return;
     const status = decodeStatus(raw);
     const entry = this.commanders.get(match.commanderId) ?? { hasSettled: false, settledFlags: null, pendingFlags: null, pendingSince: 0 };
@@ -150,11 +160,12 @@ export class StatusMonitor {
   }
 
   /**
-   * Which playing commander a Status.json write belongs to, or null when it can't be told.
+   * Which commander playing from a journal folder a Status.json write in that folder belongs to,
+   * or null when it can't be told.
    * @returns {Promise<{ commanderId: number, matchedBy: 'onlyClient' | 'fingerprint' } | null>}
    */
-  async matchCommander(raw, statusModifiedMs) {
-    const playing = this.getPlayingCommanders();
+  async matchCommander(raw, statusModifiedMs, directory) {
+    const playing = this.getPlayingCommanders().filter((commander) => commander.directory === directory);
     if (playing.length === 0) return null;
     if (playing.length === 1) return { commanderId: playing[0].id, matchedBy: 'onlyClient' };
 
@@ -172,7 +183,7 @@ export class StatusMonitor {
       if (Number.isFinite(raw.Cargo) && known.cargo !== null) {
         score += Math.abs(raw.Cargo - known.cargo) < 0.5 ? SCORE.cargoMatch : SCORE.cargoMismatch;
       }
-      const journalStats = await stat(path.join(this.journalDirectory, commander.file_name)).catch(() => null);
+      const journalStats = await stat(path.join(commander.directory, commander.file_name)).catch(() => null);
       if (journalStats && Math.abs(journalStats.mtimeMs - statusModifiedMs) <= JOURNAL_WRITE_WINDOW_MS) score += SCORE.journalWritten;
       return { commanderId: commander.id, score };
     }));

@@ -25,7 +25,7 @@ test('Legacy journals are flagged and never count as the game being played', asy
     const now = new Date();
     for (const fileName of [liveFile, legacyFile]) {
       utimesSync(path.join(fixture.journalDirectory, fileName), now, now);
-      await fixture.ingester.processFile(fileName);
+      await fixture.ingester.processFile(fixture.journalDirectory, fileName);
     }
     fixture.ingester.refreshActiveFiles();
     const files = Object.fromEntries(fixture.database.prepare('SELECT file_name, is_legacy, is_active FROM journal_files').all().map((row) => [row.file_name, row]));

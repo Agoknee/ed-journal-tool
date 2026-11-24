@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { coreSchemaSql } from './schema.mjs';
+import { coreSchemaSql, journalFilesIndexesSql, journalFilesTableSql } from './schema.mjs';
 
 /**
  * Opens (and creates if needed) the application database.
@@ -40,6 +40,8 @@ function migrateDatabase(database) {
     `);
   }
 
+  if (!journalFileColumns.has('directory')) rebuildJournalFilesWithDirectory(database);
+
   // Event counts per file replaced the (commander, time) index on journal entries.
   const hasCommanderTimeIndex = database.prepare("SELECT 1 FROM sqlite_schema WHERE type = 'index' AND name = 'idx_journal_entries_commander_time'").get();
   if (hasCommanderTimeIndex) {
@@ -51,6 +53,37 @@ function migrateDatabase(database) {
         DROP INDEX idx_journal_entries_commander_time;
       `);
     });
+  }
+}
+
+/**
+ * Journal files used to be identified by file name alone (one journal folder). Now it's folder and
+ * file name, which needs the table rebuilt (SQLite can't change a UNIQUE constraint in place), the
+ * way SQLite documents: build the new table, copy the rows (keeping their ids, which journal
+ * entries refer to), drop the old one and rename the new one into place, with foreign keys off so
+ * dropping the old table doesn't touch the entries. Existing journals get folder '' until the
+ * ingester finds which journal folder holds them.
+ */
+function rebuildJournalFilesWithDirectory(database) {
+  const oldColumns = database.prepare('PRAGMA table_info(journal_files)').all().map((column) => column.name);
+  database.exec('PRAGMA foreign_keys = OFF;');
+  try {
+    runInTransaction(database, () => {
+      database.exec('DROP TABLE IF EXISTS journal_files_new;');
+      database.exec(journalFilesTableSql('journal_files_new'));
+      const newColumns = new Set(database.prepare('PRAGMA table_info(journal_files_new)').all().map((column) => column.name));
+      const copiedColumns = oldColumns.filter((column) => newColumns.has(column)).join(', ');
+      database.exec(`
+        INSERT INTO journal_files_new (${copiedColumns}) SELECT ${copiedColumns} FROM journal_files;
+        DROP TABLE journal_files;
+        ALTER TABLE journal_files_new RENAME TO journal_files;
+      `);
+      database.exec(journalFilesIndexesSql);
+      const brokenReferences = database.prepare('PRAGMA foreign_key_check').all();
+      if (brokenReferences.length > 0) throw new Error(`Journal file table rebuild left ${brokenReferences.length} broken references`);
+    });
+  } finally {
+    database.exec('PRAGMA foreign_keys = ON;');
   }
 }
 
