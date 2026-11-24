@@ -15,6 +15,7 @@ import TravelPage from './pages/TravelPage.jsx';
 import DepotsPage from './pages/DepotsPage.jsx';
 import JournalsPage from './pages/JournalsPage.jsx';
 import MissionsPage from './pages/MissionsPage.jsx';
+import SettingsPage from './pages/SettingsPage.jsx';
 
 // Sub-sections are listed under the active page in the sidebar. Each scrolls to the element with
 // its targetId, or to the top of the page when there's none.
@@ -109,6 +110,7 @@ const PAGES = [
     ],
   },
   { id: 'chat', label: 'Chat', component: ChatPage },
+  { id: 'settings', label: 'Settings', component: SettingsPage, subSections: [{ label: 'Password' }] },
   // Opened from the connection status at the bottom of the sidebar instead of the nav.
   { id: 'journals', label: 'Journals', component: JournalsPage, isHiddenFromNav: true },
 ];

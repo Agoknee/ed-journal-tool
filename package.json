@@ -1,6 +1,6 @@
 {
   "name": "ed-journal-tool",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "Monitors Elite Dangerous journal files, stores them in SQLite and serves stats through an API and React dashboard.",
   "type": "module",
   "private": true,

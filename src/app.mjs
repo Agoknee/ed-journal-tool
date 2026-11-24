@@ -10,6 +10,7 @@ import { compactJournalEntries, vacuumIfDue } from './database/entry-compression
 import { ensureDataDirectory, inaraAssetDirectory } from './data-paths.mjs';
 import { EventHub } from './events/event-hub.mjs';
 import { JournalIngester } from './journals/journal-ingester.mjs';
+import { SettingsStore } from './settings/settings-store.mjs';
 import { defaultJournalDirectories, describeJournalSearch } from './journals/journal-locations.mjs';
 import { JournalMonitor } from './journals/journal-monitor.mjs';
 import { StatusMonitor } from './journals/status-monitor.mjs';
@@ -86,6 +87,7 @@ export async function startApp() {
   const statusMonitor = new StatusMonitor({ database, journalDirectories: ingester.journalDirectories, eventHub });
 
   const compression = createCompressionProgress(eventHub);
+  const settings = new SettingsStore();
 
   const app = createServer({
     database,
@@ -99,6 +101,7 @@ export async function startApp() {
     journalSearch,
     compression,
     inaraAssetDirectory,
+    settings,
   });
 
   const httpServer = http.createServer(app);
@@ -141,6 +144,11 @@ export async function startApp() {
   });
   httpServer.listen(options.port, options.bind, () => {
     logger.info(`Dashboard and API available at ${dashboardUrl} (bound to ${options.bind})`);
+    if (options.bind !== '127.0.0.1' && options.bind !== 'localhost') {
+      logger.info(settings.getInternal('passwordHash')
+        ? 'Other devices log in with the password set in Settings.'
+        : `Other devices can't use the dashboard until a password is set in Settings (at ${dashboardUrl}, on this computer).`);
+    }
     reportBackgroundReady();
     if (showsTray) {
       startTrayIcon({

@@ -27,7 +27,7 @@ This tool is 100% vibe-coded by Claude. It's something I've been wanting to buil
 - **Notes** on any carrier or commander.
 - **Finds your journals by itself:** the usual Windows folder, or on Linux Steam/Proton, Heroic, Lutris, Bottles and Wine folders. It can read several journal folders at once (one synced from another PC, say), and if none is found yet it keeps looking.
 - **Keeps every journal entry** in its database (compressed), so the original journal files can be deleted once they've been read.
-- **Use it from any device on your network,** phones included: the dashboard is a web page served on port 4267 (monitoring AFK sessions from your phone is amazing).
+- **Use it from any device on your network,** phones included: the dashboard is a web page served on port 4267 (monitoring AFK sessions from your phone is amazing). Other devices log in with a password you set under Settings; on the PC running EDJT it's never asked.
 - **The Windows tray icon** opens the dashboard, shows the log, or quits. The Windows EXE runs in the background with no console window.
 - **Windows and Linux.** The Linux installer adds a menu entry, and can run EDJT as a service so it keeps running in the background. That should let it work on a Steam Deck in Game Mode as well as Desktop Mode, but it hasn't been tried on one yet.
 - **Journal details and raw SQL.** Click "X active journals" at the bottom left for every journal file and its status (including corrupt or unreadable ones), the raw lines of any journal, and a tool for running read-only SQL queries on all the stored data.
@@ -119,6 +119,8 @@ journal files ──▶ JournalIngester ──▶ journal_files / journal_entrie
 - **Commander assignment**: a file is linked to the commander found in its `Commander`/`LoadGame` events. A file with no commander once it's finished, or with more than one commander, is flagged `corrupt`: its entries aren't stored and it shows in the Journals section with the reason. A file that's still being written and has no commander yet is `pending`.
 - **Active journals**: an unclosed file (no `Shutdown`/`Continued`), modified within the last hour, that is the newest file for its commander. chokidar catches new files and changes, and active files are also polled every 2 seconds because Windows can delay change notifications for open files.
 - **Stats** (`src/stats`): each module keeps a cursor (the last entry id it processed), so updates only touch new entries.
+- **Other devices and the password** (`src/server/auth.mjs`): on the PC running EDJT nothing is asked; a request counts as local when it arrives over loopback *and* is addressed to `localhost`, `127.0.0.1` or `[::1]` (so a web page can't pass as local by pointing its own name at 127.0.0.1). Anywhere else, `/api` needs a session from logging in with the password set under Settings, and with no password set other devices can't use it at all. The password is stored as an scrypt hash; a login gets a 30-day cookie (HttpOnly, SameSite=Strict), and changing the password logs every device out. After 5 wrong passwords, an address's logins are refused for a minute. Requests that change something from another website are refused. EDJT serves plain HTTP, so on your network the password travels unencrypted.
+- **Settings** (`src/settings/settings-store.mjs`): kept in `settings.json` in the data folder (`%LOCALAPPDATA%\edjt`, or `~/.local/share/edjt`), not in the database, so the SQL tool can't read the password hash and deleting `journals.db` to start afresh keeps them. New settings are added to `SETTING_DEFINITIONS` there, with a default and a check; the dashboard reads them from `GET /api/settings`.
 
 ## Adding or removing a stat
 
@@ -131,11 +133,13 @@ On the next launch, a new module processes all stored entries. Bumping `version`
 
 | Route | Description |
 | --- | --- |
+| `GET /api/auth/status`, `POST /api/auth/login` `{ password }`, `POST /api/auth/logout` | Whether a login is needed; logging in and out (other devices) |
+| `GET /api/settings`, `PATCH /api/settings` | Settings; `PUT /api/settings/password` `{ newPassword, currentPassword? }`, `DELETE /api/settings/password` |
 | `GET /api/status` | Scan progress, module status |
 | `GET /api/commanders` | Commander list |
 | `GET /api/journals`, `/api/journals/summary`, `/api/journals/:id/entries` | Journal files, counts, active files, raw entries |
 | `POST /api/sql` `{ query }` | Raw SQL on a read-only connection (max 1000 rows); `GET /api/sql/schema` |
-| `GET /api/events` | Server-sent events: `journals`, `stats`, `scan` |
+| `GET /api/events` | Server-sent events: `journals`, `stats`, `scan`, `statsBuild`, `compression`, `clock`, `notes`, `ticks`, `adjustments`, `shipStatus` |
 | `GET /api/stats` / `POST /api/stats/rebuild` `{ module? }` | List or rebuild stat modules |
 | `/api/stats/commanders` | Profiles, ranks, ship, game mode |
 | `/api/stats/travel/{locations,summary,jumps,top-systems}` | Location; normal / supercharged / synthesis / carrier jumps |

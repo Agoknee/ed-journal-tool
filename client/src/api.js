@@ -2,6 +2,9 @@
  * Small helpers for calling the server API.
  */
 
+/** Sent on window when the API asks for a login (from another device, its session having ended). */
+export const AUTH_REQUIRED_EVENT = 'edjt:auth-required';
+
 /** Builds "?a=1&b=2" from an object, skipping empty values. */
 export function buildQueryString(params = {}) {
   const searchParams = new URLSearchParams();
@@ -22,6 +25,7 @@ export async function fetchJson(path, { signal, method = 'GET', body } = {}) {
   });
 
   const responseData = await response.json().catch(() => ({}));
+  if (responseData.code === 'auth-required' || responseData.code === 'remote-access-off') window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT));
   if (!response.ok) throw new Error(responseData.error ?? `Request failed (${response.status})`);
   return responseData;
 }
