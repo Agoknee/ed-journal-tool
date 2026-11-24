@@ -1,0 +1,45 @@
+# The version check for pull requests into main (the main ruleset requires "Version raised"): the
+# version in package.json must be higher than the last release's, unless the pull request is
+# labelled "no-release" (documentation, CI, dependency updates).
+#
+# It's its own workflow because it's the only check labels change: adding or removing a label runs
+# just this, not the lint, tests and build. Runs aren't cancelled by newer ones (a PR opened with a
+# label starts two at once), and each reads the labels as they are when it runs, not from the event
+# that started it, so overlapping runs all come to the same answer.
+name: Version
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  version:
+    name: Version raised
+    runs-on: ubuntu-latest
+    steps:
+      - name: Labels
+        id: labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          labels=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels --jq '.labels[].name')
+          if printf '%s\n' "$labels" | grep -qx 'no-release'; then
+            echo "::notice::Labelled no-release, so the version needn't change."
+            echo "no-release=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.labels.outputs.no-release != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the release tags
+      - if: steps.labels.outputs.no-release != 'true'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - if: steps.labels.outputs.no-release != 'true'
+        run: node scripts/check-version.mjs
