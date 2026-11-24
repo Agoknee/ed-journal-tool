@@ -44,7 +44,7 @@ export function splitJournalDirectories(values) {
 
 /**
  * Parses command-line options.
- * @returns {{ port: number, bind: string, debug: boolean, journaldir: string[], isJournalDirAutomatic: boolean, database: string, devClient: boolean, rebuildStats: boolean }}
+ * @returns {{ port: number, bind: string, debug: boolean, journaldir: string[], isJournalDirAutomatic: boolean, database: string, devClient: boolean, rebuildStats: boolean, tray?: boolean, logFile?: string, console: boolean }}
  */
 export function parseCommandLineOptions(argv = process.argv) {
   const options = yargs(hideBin(argv))
@@ -92,6 +92,20 @@ export function parseCommandLineOptions(argv = process.argv) {
       type: 'boolean',
       default: false,
       describe: 'Clear and rebuild all parsed stats from stored journal entries on launch',
+    })
+    .option('tray', {
+      type: 'boolean',
+      defaultDescription: 'on (Windows)',
+      describe: 'Windows: show an icon in the system tray (open the dashboard, show the log, quit). --no-tray turns it off',
+    })
+    .option('log-file', {
+      type: 'string',
+      describe: 'Windows: the file this run\'s output is written to (redirected there, say), for the tray icon\'s "Show Log"',
+    })
+    .option('console', {
+      type: 'boolean',
+      default: false,
+      describe: 'Windows executable: keep running in this console window, instead of in the background with only the tray icon',
     })
     .check((options) => {
       if (!Number.isInteger(options.port) || options.port < 1 || options.port > 65535) {

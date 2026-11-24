@@ -18,7 +18,10 @@ import { createServer, serveBuiltClient } from './server/server.mjs';
 import { serveClientWithVite } from './server/vite-dev-client.mjs';
 import { statModules } from './stats/index.mjs';
 import { StatsEngine } from './stats/stats-engine.mjs';
+import { isBackgroundChild, launchInBackground, backgroundLogPath, openInBrowser, reportBackgroundReady } from './windows/background.mjs';
+import { startTrayIcon } from './windows/tray.mjs';
 
+const APP_NAME = 'ED Journal Tool';
 /** How often to look again for a journal folder while there's none. */
 const JOURNAL_SEARCH_INTERVAL_MS = 60 * 1000;
 
@@ -27,7 +30,19 @@ export async function startApp() {
   // Parsed first so --help and --version print only their own output.
   const options = parseCommandLineOptions();
   logger.setDebug(options.debug);
-  logger.info(`Starting ED Journal Tool v${appVersion} - CTRL+C to exit...`);
+  const dashboardUrl = `http://${options.bind === '0.0.0.0' ? 'localhost' : options.bind}:${options.port}`;
+
+  // On Windows there's a tray icon (--no-tray turns it off), and the executable runs in the
+  // background (no console window) unless started with --console; see windows/background.mjs.
+  // Run with node (npm start) it stays in its console.
+  const isPackaged = Boolean(process.pkg);
+  const showsTray = process.platform === 'win32' && (options.tray ?? true);
+  const isInBackground = isBackgroundChild();
+  if (showsTray && isPackaged && !options.console && !isInBackground) {
+    await launchInBackground({ port: options.port, bind: options.bind, dashboardUrl, appName: APP_NAME });
+    return;
+  }
+  logger.info(`Starting ${APP_NAME} v${appVersion} - ${isInBackground ? 'quit it from its tray icon' : 'CTRL+C to exit'}...`);
 
   // A journal folder that isn't there (a synced folder not available yet, say) is warned about and
   // its journals left as they were. With none there at all, the app starts anyway (the dashboard
@@ -94,30 +109,7 @@ export async function startApp() {
     serveBuiltClient(app, path.join(clientRootPath, 'dist'));
   }
 
-  httpServer.on('error', (error) => {
-    logger.error(`Web server failed to start: ${error.message}`);
-    process.exit(1);
-  });
-  httpServer.listen(options.port, options.bind, () => {
-    const displayHost = options.bind === '0.0.0.0' ? 'localhost' : options.bind;
-    logger.info(`Dashboard and API available at http://${displayHost}:${options.port} (bound to ${options.bind})`);
-  });
-
-  clockMonitor.start();
-  tickMonitor.start();
-  // The rank, Powerplay and engineer images: downloaded the first time (and whenever some are
-  // missing), in the background so it doesn't hold up reading the journals.
-  ensureInaraAssets({ directory: inaraAssetDirectory, log: logger })
-    .catch((error) => logger.warn(`Couldn't download the Inara images: ${error.message}`));
-  await journalMonitor.scanJournalDirectory();
-  // A new database gets its compression dictionary once the first scan has stored enough entries.
-  await compactJournalEntries(database);
-  journalMonitor.start();
-  statusMonitor.start();
-  const journalSearchTimer = journalSearch.status
-    ? watchForJournalFolders({ options, journalSearch, journalMonitor, statusMonitor, eventHub })
-    : null;
-
+  let journalSearchTimer = null;
   let isShuttingDown = false;
   async function shutDown() {
     if (isShuttingDown) return;
@@ -136,6 +128,42 @@ export async function startApp() {
   }
   process.on('SIGINT', shutDown);
   process.on('SIGTERM', shutDown);
+
+  httpServer.on('error', (error) => {
+    logger.error(`Web server failed to start: ${error.message}`);
+    process.exit(1);
+  });
+  httpServer.listen(options.port, options.bind, () => {
+    logger.info(`Dashboard and API available at ${dashboardUrl} (bound to ${options.bind})`);
+    reportBackgroundReady();
+    if (showsTray) {
+      startTrayIcon({
+        title: APP_NAME,
+        dashboardUrl,
+        logPath: isInBackground ? backgroundLogPath : (options.logFile ? path.resolve(options.logFile) : null),
+        iconPath: path.join(projectRootPath, 'packaging', 'edjt.ico'),
+        notification: isInBackground ? `Running in the background. The dashboard is at ${dashboardUrl}.` : null,
+        onQuit: shutDown,
+        // Without its icon, a background copy would be out of sight: show the dashboard instead.
+        onFailure: () => { if (isInBackground && !isShuttingDown) openInBrowser(dashboardUrl); },
+      });
+    }
+  });
+
+  clockMonitor.start();
+  tickMonitor.start();
+  // The rank, Powerplay and engineer images: downloaded the first time (and whenever some are
+  // missing), in the background so it doesn't hold up reading the journals.
+  ensureInaraAssets({ directory: inaraAssetDirectory, log: logger })
+    .catch((error) => logger.warn(`Couldn't download the Inara images: ${error.message}`));
+  await journalMonitor.scanJournalDirectory();
+  // A new database gets its compression dictionary once the first scan has stored enough entries.
+  await compactJournalEntries(database);
+  journalMonitor.start();
+  statusMonitor.start();
+  if (journalSearch.status) {
+    journalSearchTimer = watchForJournalFolders({ options, journalSearch, journalMonitor, statusMonitor, eventHub });
+  }
 }
 
 /**
