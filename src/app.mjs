@@ -154,8 +154,10 @@ export async function startApp() {
   tickMonitor.start();
   // The rank, Powerplay and engineer images: downloaded the first time (and whenever some are
   // missing), in the background so it doesn't hold up reading the journals.
-  ensureInaraAssets({ directory: inaraAssetDirectory, log: logger })
-    .catch((error) => logger.warn(`Couldn't download the Inara images: ${error.message}`));
+  if (options.downloadImages) {
+    ensureInaraAssets({ directory: inaraAssetDirectory, log: logger })
+      .catch((error) => logger.warn(`Couldn't download the Inara images: ${error.message}`));
+  }
   await journalMonitor.scanJournalDirectory();
   // A new database gets its compression dictionary once the first scan has stored enough entries.
   await compactJournalEntries(database);

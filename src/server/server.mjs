@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import express from 'express';
+import { appVersion } from '../cli.mjs';
 import { logger } from '../logger.mjs';
 import { createBgsAdjustmentRoutes } from './routes/bgs-adjustment-routes.mjs';
 import { createEventRoutes } from './routes/event-routes.mjs';
@@ -39,6 +40,7 @@ export function createServer({ database, databasePath, statsEngine, journalMonit
 
   apiRouter.get('/status', (request, response) => {
     response.json({
+      version: appVersion,
       journalDirectories,
       journalSearch: journalSearch?.status ?? null,
       databasePath,

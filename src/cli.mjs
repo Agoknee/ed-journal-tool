@@ -44,7 +44,7 @@ export function splitJournalDirectories(values) {
 
 /**
  * Parses command-line options.
- * @returns {{ port: number, bind: string, debug: boolean, journaldir: string[], isJournalDirAutomatic: boolean, database: string, devClient: boolean, rebuildStats: boolean, tray?: boolean, logFile?: string, console: boolean }}
+ * @returns {{ port: number, bind: string, debug: boolean, journaldir: string[], isJournalDirAutomatic: boolean, database: string, devClient: boolean, rebuildStats: boolean, downloadImages: boolean, tray?: boolean, logFile?: string, console: boolean }}
  */
 export function parseCommandLineOptions(argv = process.argv) {
   const options = yargs(hideBin(argv))
@@ -92,6 +92,11 @@ export function parseCommandLineOptions(argv = process.argv) {
       type: 'boolean',
       default: false,
       describe: 'Clear and rebuild all parsed stats from stored journal entries on launch',
+    })
+    .option('download-images', {
+      type: 'boolean',
+      default: true,
+      describe: 'Download the rank, Powerplay and engineer images from Inara when they\'re missing. --no-download-images goes without them',
     })
     .option('tray', {
       type: 'boolean',
