@@ -431,7 +431,12 @@ function ConnectionStatus({ activeJournalCount, isActive }) {
   );
 }
 
-/** Warns when the server's clock is off from the game server's, since carrier timers depend on it. */
+/**
+ * Warns when the server's clock is off from the game server's, since carrier timers depend on it.
+ * On the Windows computer itself, it links to Windows' Date & Time settings, whose "Sync now"
+ * needs no administrator rights (EDJT can't sync the clock itself without them). The browser asks
+ * before opening it.
+ */
 function ClockBanner() {
   const statusRequest = useApi('/api/status', {}, ['clock']);
   const clockStatus = statusRequest.data?.clock;
@@ -439,8 +444,11 @@ function ClockBanner() {
   const direction = clockStatus.offsetSeconds > 0 ? 'ahead of' : 'behind';
   return (
     <div className="notice notice-warning">
-      This computer's clock is about {Math.abs(clockStatus.offsetSeconds).toFixed(1)}s {direction} the game server, so carrier
-      jump and cooldown timers will be off by that much. Synchronize the system clock to fix it.
+      {statusRequest.data.isLocal ? 'This computer' : 'The EDJT computer'}'s clock is about {Math.abs(clockStatus.offsetSeconds).toFixed(1)}s {direction} the game server, so carrier
+      jump and cooldown timers will be off by that much.{' '}
+      {statusRequest.data.canOpenTimeSettings
+        ? <>Synchronize the clock to fix it: <a href="ms-settings:dateandtime">open Date &amp; Time settings</a> and click <b>Sync now</b>.</>
+        : 'Synchronize the system clock to fix it.'}
     </div>
   );
 }

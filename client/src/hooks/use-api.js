@@ -37,8 +37,9 @@ function getStatsTopic(path) {
 }
 
 /**
- * Fetches JSON from the API and refetches when parameters change or when the server reports
- * changes on any of the given topics. Previous data stays available while refetching.
+ * Fetches JSON from the API and refetches when parameters change, when the server reports
+ * changes on any of the given topics, or when live updates reconnect (the server restarted, say).
+ * Previous data stays available while refetching.
  *
  * For stats paths, the "stats" topic narrows to the module the path belongs to, so a request only
  * refetches when its own data changed.
@@ -48,11 +49,15 @@ function getStatsTopic(path) {
  * @returns {{ data: any, error: Error | null, isLoading: boolean }}
  */
 export function useApi(path, params = {}, refreshTopics = ['stats']) {
-  const { versions } = useLiveUpdates();
+  const { versions, reconnectCount } = useLiveUpdates();
   const requestUrl = path ? `${path}${buildQueryString(params)}` : null;
   const statsTopic = getStatsTopic(path);
   const topics = refreshTopics.map((topic) => (topic === 'stats' && statsTopic ? statsTopic : topic));
-  const refreshKey = topics.map((topic) => versions[topic] ?? 0).join(':');
+  // Also refetched whenever live updates reconnect, as changes announced meanwhile were missed. The
+  // topic names are part of the key: requests for the same URL refreshing on different topics
+  // mustn't share a result just because their counts happen to match ("clock" 1 isn't "scan" 1;
+  // the clock warning would get a status fetched before the clock was checked).
+  const refreshKey = [`reconnect=${reconnectCount}`, ...topics.map((topic) => `${topic}=${versions[topic] ?? 0}`)].join('&');
   const requestKey = requestUrl ? `${requestUrl}#${refreshKey}` : null;
 
   const [result, setResult] = useState({ requestKey: null, data: null, error: null });
