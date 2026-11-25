@@ -85,6 +85,13 @@ const ICON_PATHS = {
       <path d="M15 2a7 7 0 0 1 7 7" />
     </>
   ),
+  // Gear: eight teeth around a hub
+  settings: (
+    <>
+      <path className="nav-icon-fill" d="M10.3 2h3.4l.5 2.6 1.6.7 2.2-1.5 2.4 2.4-1.5 2.2.7 1.6 2.6.5v3.4l-2.6.5-.7 1.6 1.5 2.2-2.4 2.4-2.2-1.5-1.6.7-.5 2.6h-3.4l-.5-2.6-1.6-.7-2.2 1.5-2.4-2.4 1.5-2.2-.7-1.6L2 13.7v-3.4l2.6-.5.7-1.6-1.5-2.2 2.4-2.4 2.2 1.5 1.6-.7z" />
+      <circle cx="12" cy="12" r="3.2" />
+    </>
+  ),
 };
 
 export default function NavIcon({ name }) {

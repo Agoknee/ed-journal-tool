@@ -109,6 +109,11 @@ export class StatusMonitor {
     this.timer = null;
   }
 
+  /** Forgets the commanders it knows of (their ids), for a database reset. */
+  forgetCommanders() {
+    this.commanders.clear();
+  }
+
   async poll() {
     this.settleFlags();
     for (const statusFile of this.statusFiles) await this.pollStatusFile(statusFile);

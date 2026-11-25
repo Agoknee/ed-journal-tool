@@ -6,10 +6,12 @@ import { appVersion, parseCommandLineOptions, projectRootPath } from './cli.mjs'
 import { TickMonitor } from './bgs-ticks.mjs';
 import { ClockMonitor } from './clock-check.mjs';
 import { openDatabase } from './database/database.mjs';
+import { clearDatabase, keepResetCopy } from './database/database-maintenance.mjs';
 import { compactJournalEntries, vacuumIfDue } from './database/entry-compression.mjs';
 import { ensureDataDirectory, inaraAssetDirectory } from './data-paths.mjs';
 import { EventHub } from './events/event-hub.mjs';
 import { JournalIngester } from './journals/journal-ingester.mjs';
+import { SettingsStore } from './settings/settings-store.mjs';
 import { defaultJournalDirectories, describeJournalSearch } from './journals/journal-locations.mjs';
 import { JournalMonitor } from './journals/journal-monitor.mjs';
 import { StatusMonitor } from './journals/status-monitor.mjs';
@@ -86,6 +88,8 @@ export async function startApp() {
   const statusMonitor = new StatusMonitor({ database, journalDirectories: ingester.journalDirectories, eventHub });
 
   const compression = createCompressionProgress(eventHub);
+  const settings = new SettingsStore();
+  const databaseReset = createDatabaseReset({ database, databasePath, statsEngine, journalMonitor, statusMonitor, eventHub, compression });
 
   const app = createServer({
     database,
@@ -99,6 +103,8 @@ export async function startApp() {
     journalSearch,
     compression,
     inaraAssetDirectory,
+    settings,
+    databaseReset,
   });
 
   const httpServer = http.createServer(app);
@@ -141,6 +147,11 @@ export async function startApp() {
   });
   httpServer.listen(options.port, options.bind, () => {
     logger.info(`Dashboard and API available at ${dashboardUrl} (bound to ${options.bind})`);
+    if (options.bind !== '127.0.0.1' && options.bind !== 'localhost') {
+      logger.info(settings.getInternal('passwordHash')
+        ? 'Other devices log in with the password set in Settings.'
+        : `Other devices can't use the dashboard until a password is set in Settings (at ${dashboardUrl}, on this computer).`);
+    }
     reportBackgroundReady();
     if (showsTray) {
       startTrayIcon({
@@ -174,6 +185,7 @@ export async function startApp() {
   }
   journalMonitor.start();
   statusMonitor.start();
+  databaseReset.markStarted();
   if (journalSearch.status) {
     journalSearchTimer = watchForJournalFolders({ options, journalSearch, journalMonitor, statusMonitor, eventHub });
   }
@@ -206,6 +218,101 @@ function createCompressionProgress(eventHub) {
     },
   };
   return progress;
+}
+
+/**
+ * Resetting the database from the Settings page: everything in it is deleted, then the journals
+ * still in the journal folders are read again from scratch, as on a new system.
+ *
+ * Done in place, with the app running: what reads or writes the database is paused first (the
+ * journal watcher finishing any file it's reading, the stats engine any update), the tables are
+ * emptied and the file shrunk (clearDatabase), what's remembered about the old data is forgotten
+ * (the stat modules' processors, Status.json's commanders, the compression dictionaries), and the
+ * journals are scanned again. Refused while the app is busy (starting, scanning, building stats,
+ * compressing, or already resetting).
+ */
+function createDatabaseReset({ database, databasePath, statsEngine, journalMonitor, statusMonitor, eventHub, compression }) {
+  let hasStarted = false;
+  let isResetting = false;
+
+  /** Why a reset can't be done now, or null. */
+  function busyReason() {
+    if (isResetting) return 'The database is being reset.';
+    if (!hasStarted || journalMonitor.scanProgress.isScanning) return 'Journals are being scanned. Try again once that’s finished.';
+    if (statsEngine.buildProgress.isBuilding) return 'Stats are being built. Try again once that’s finished.';
+    if (compression.status.isCompressing) return 'Journal entries are being compressed. Try again once that’s finished.';
+    return null;
+  }
+
+  /**
+   * Empties the database (after keeping a copy of it, if asked), then reads the journals again in
+   * the background. Resolves once it's empty, with the copy kept. If the copy can't be made,
+   * nothing is deleted.
+   * @param {{ keepCopy?: boolean }} [options]
+   * @returns {Promise<{ copy: { path: string, bytes: number } | null }>}
+   */
+  async function reset({ keepCopy = false } = {}) {
+    const reason = busyReason();
+    if (reason) throw Object.assign(new Error(reason), { status: 409 });
+    isResetting = true;
+    let copy = null;
+    try {
+      logger.warn('Resetting the database (from the Settings page)...');
+      statusMonitor.stop();
+      await journalMonitor.pauseForReset();
+      await statsEngine.runningUpdate;
+      if (keepCopy) {
+        try {
+          copy = keepResetCopy(database, databasePath);
+          logger.info(`Kept a copy of the database: "${copy.path}".`);
+        } catch (error) {
+          logger.warn(`Couldn't keep a copy of the database, so it wasn't reset: ${error.message}`);
+          // Carries on as before (nothing was deleted), catching up on journal changes made while paused.
+          journalMonitor.resumeAfterReset();
+          journalMonitor.scanJournalDirectory()
+            .catch((scanError) => logger.error('Reading the journals after the cancelled reset failed:', scanError))
+            .finally(() => {
+              journalMonitor.start();
+              statusMonitor.start();
+            });
+          throw error;
+        }
+      }
+      logger.warn('Deleting everything in the database...');
+      clearDatabase(database);
+      statsEngine.initialize();
+      statusMonitor.forgetCommanders();
+      logger.info('The database is empty; reading the journals again.');
+      eventHub.publish('journals', { reason: 'database-reset' });
+      eventHub.publish('stats', { modules: statsEngine.statModules.map((statModule) => statModule.name) });
+    } catch (error) {
+      isResetting = false;
+      throw error;
+    }
+
+    // Reading everything again takes minutes; the dashboard shows the scan and the rest.
+    (async () => {
+      try {
+        journalMonitor.resumeAfterReset();
+        await journalMonitor.scanJournalDirectory();
+        try {
+          await compactJournalEntries(database, { onProgress: compression.onProgress });
+        } finally {
+          compression.finish();
+        }
+      } catch (error) {
+        logger.error('Reading the journals again after the reset failed:', error);
+      } finally {
+        journalMonitor.start();
+        statusMonitor.start();
+        isResetting = false;
+        eventHub.publish('journals', { reason: 'database-reset-done' });
+      }
+    })();
+    return { copy };
+  }
+
+  return { busyReason, reset, markStarted: () => { hasStarted = true; } };
 }
 
 /**

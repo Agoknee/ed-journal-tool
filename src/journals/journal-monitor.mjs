@@ -39,6 +39,8 @@ export class JournalMonitor {
     this.watcher = null;
 
     this.scanProgress = { isScanning: false, totalFiles: 0, processedFiles: 0, newEntries: 0 };
+    /** While a database reset is under way: nothing is read (see pauseForReset). */
+    this.isPaused = false;
   }
 
   /** The journal folders, for log messages. */
@@ -120,7 +122,29 @@ export class JournalMonitor {
     for (const timer of this.timers) clearInterval(timer);
     for (const timer of this.debounceTimers.values()) clearTimeout(timer);
     this.timers = [];
+    this.debounceTimers.clear();
     await this.watcher?.close();
+    this.watcher = null;
+  }
+
+  /**
+   * Stops watching and reading, for a database reset: queued files are dropped, and a file being
+   * read is finished first. Its memory of the stored journals is forgotten too. It stays paused
+   * until resumeAfterReset(), then scanJournalDirectory() and start() carry on.
+   */
+  async pauseForReset() {
+    this.isPaused = true;
+    await this.stop();
+    this.queuedFiles.clear();
+    while (this.isProcessingQueue) await new Promise((resolve) => setTimeout(resolve, 50));
+    this.retryCounts.clear();
+    this.needsStatsRebuild = false;
+    this.activeFileIdsSignature = '';
+    this.scanProgress = { isScanning: false, totalFiles: 0, processedFiles: 0, newEntries: 0 };
+  }
+
+  resumeAfterReset() {
+    this.isPaused = false;
   }
 
   /** The journal folder and file name a watched path belongs to, or null if it's not a journal in one of them. */
@@ -172,16 +196,17 @@ export class JournalMonitor {
   }
 
   async processQueue() {
-    if (this.isProcessingQueue || this.scanProgress.isScanning) return;
+    if (this.isProcessingQueue || this.scanProgress.isScanning || this.isPaused) return;
     this.isProcessingQueue = true;
 
     try {
       let hasAnyChanges = false;
-      while (this.queuedFiles.size > 0) {
+      while (this.queuedFiles.size > 0 && !this.isPaused) {
         const nextFiles = [...this.queuedFiles.values()].sort((first, second) => compareJournalFileNames(first.fileName, second.fileName));
         this.queuedFiles.clear();
 
         for (const file of nextFiles) {
+          if (this.isPaused) break;
           const key = fileKey(file.directory, file.fileName);
           const label = this.ingester.describeFile(file.directory, file.fileName);
           const retryCount = this.retryCounts.get(key) ?? 0;
@@ -203,7 +228,7 @@ export class JournalMonitor {
         }
       }
 
-      if (hasAnyChanges) {
+      if (hasAnyChanges && !this.isPaused) {
         this.refreshActiveFiles();
         await this.updateStats();
         this.eventHub.publish('journals', { reason: 'files-updated' });
@@ -213,7 +238,7 @@ export class JournalMonitor {
     }
 
     // Changes may have queued while stats were updating.
-    if (this.queuedFiles.size > 0) this.processQueue();
+    if (this.queuedFiles.size > 0 && !this.isPaused) this.processQueue();
   }
 
   async processFileSafely(file, options) {

@@ -3,7 +3,9 @@ import path from 'node:path';
 import express from 'express';
 import { appVersion } from '../cli.mjs';
 import { logger } from '../logger.mjs';
+import { createAuth } from './auth.mjs';
 import { createBgsAdjustmentRoutes } from './routes/bgs-adjustment-routes.mjs';
+import { createDatabaseRoutes } from './routes/database-routes.mjs';
 import { createEventRoutes } from './routes/event-routes.mjs';
 import { createJournalRoutes } from './routes/journal-routes.mjs';
 import { createNoteRoutes } from './routes/note-routes.mjs';
@@ -23,11 +25,17 @@ import { createSqlRoutes } from './routes/sql-routes.mjs';
  * @param {{ status: object }} [options.journalSearch]  whether it's still looking for a journal folder
  * @param {{ status: object }} [options.compression]  progress compressing stored journal entries
  * @param {string} [options.inaraAssetDirectory]  where the downloaded Inara artwork is, served at /inara
+ * @param {import('../settings/settings-store.mjs').SettingsStore} options.settings  (with the password; see auth.mjs)
+ * @param {{ busyReason: () => string | null, reset: (options: { keepCopy?: boolean }) => Promise<{ copy: object | null }> }} options.databaseReset  (see app.mjs)
  */
-export function createServer({ database, databasePath, statsEngine, journalMonitor, clockMonitor, statusMonitor, eventHub, journalDirectories, journalSearch, compression, inaraAssetDirectory }) {
+export function createServer({ database, databasePath, statsEngine, journalMonitor, clockMonitor, statusMonitor, eventHub, journalDirectories, journalSearch, compression, inaraAssetDirectory, settings, databaseReset }) {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '1mb' }));
+
+  // Other devices need the password for the API (see auth.mjs).
+  const auth = createAuth({ settings });
+  app.use('/api', auth.refuseOtherSites, auth.protectApi);
 
   if (logger.isDebugEnabled) {
     app.use('/api', (request, response, next) => {
@@ -38,6 +46,9 @@ export function createServer({ database, databasePath, statsEngine, journalMonit
   }
 
   const apiRouter = express.Router();
+  apiRouter.use('/auth', auth.authRouter);
+  apiRouter.use('/settings', auth.settingsRouter);
+  apiRouter.use('/database', createDatabaseRoutes({ database, databasePath, databaseReset, checkCurrentPassword: auth.checkCurrentPassword }));
 
   apiRouter.get('/status', (request, response) => {
     response.json({
