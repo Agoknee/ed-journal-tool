@@ -83,10 +83,12 @@ export class GalaxyScene {
       this.isUserMoving = true;
     });
     this.controls.addEventListener('end', () => { this.isUserMoving = false; });
+    this.useControlSpeeds('mouse');
 
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.7, 0.5, 0.12);
+    // Only bright things bloom (trails, arrivals, commanders), not the galaxy's haze.
+    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.5, 0.45, 0.35);
     this.composer.addPass(this.bloomPass);
     this.composer.addPass(new OutputPass());
 
@@ -104,6 +106,7 @@ export class GalaxyScene {
     this.scene.add(this.landmarkMarkers);
 
     this.travel = null;
+    this.galaxyBrightness = 1;
     this.colorMode = 'type';
     this.trailStyle = 'trail';
     this.pace = 'jumps';
@@ -120,6 +123,8 @@ export class GalaxyScene {
     this.resizeObserver.observe(container);
     this.resize();
 
+    // Each gesture gets the speeds for what's doing it, so a touchscreen laptop still feels right with a mouse.
+    this.handlePointerDown = (pointerEvent) => this.useControlSpeeds(pointerEvent.pointerType);
     this.handlePointerMove = (pointerEvent) => {
       const bounds = this.renderer.domElement.getBoundingClientRect();
       this.pointer = { x: pointerEvent.clientX - bounds.left, y: pointerEvent.clientY - bounds.top };
@@ -132,12 +137,26 @@ export class GalaxyScene {
     this.handleDoubleClick = () => {
       if (this.hoveredSystem) this.flyTo(this.hoveredSystem.scenePosition, Math.max(40, this.camera.position.distanceTo(this.controls.target) * 0.35));
     };
+    // Capture phase: the speeds must be set before the controls see the same pointerdown.
+    this.renderer.domElement.addEventListener('pointerdown', this.handlePointerDown, true);
     this.renderer.domElement.addEventListener('pointermove', this.handlePointerMove);
     this.renderer.domElement.addEventListener('pointerleave', this.handlePointerLeave);
     this.renderer.domElement.addEventListener('dblclick', this.handleDoubleClick);
 
     this.lastFrameAt = performance.now();
     this.animationFrame = requestAnimationFrame(this.frame);
+  }
+
+  /**
+   * A finger moves many more pixels than a mouse for the same intent, so touch turns, zooms and
+   * pans more gently, and stops sooner after a flick instead of spinning on.
+   */
+  useControlSpeeds(pointerType) {
+    const isTouch = pointerType === 'touch' || pointerType === 'pen';
+    this.controls.rotateSpeed = isTouch ? 0.35 : 0.8;
+    this.controls.zoomSpeed = isTouch ? 0.55 : 1;
+    this.controls.panSpeed = isTouch ? 0.45 : 1;
+    this.controls.dampingFactor = isTouch ? 0.18 : 0.08;
   }
 
   addLabel(text, className, scenePosition) {
@@ -220,6 +239,11 @@ export class GalaxyScene {
 
   setSpeed(speed) {
     this.speed = speed;
+  }
+
+  /** How bright the galaxy backdrop is, 0 (off) to 2 (twice the default); the trails aren't affected. */
+  setGalaxyBrightness(brightness) {
+    this.galaxyBrightness = brightness;
   }
 
   /** How many jumps finish in each of a number of equal slices of the timeline, for the activity strip. */
@@ -360,7 +384,7 @@ export class GalaxyScene {
     this.camera.updateProjectionMatrix();
     this.starfield.position.copy(this.camera.position);
     // The galaxy dims when zoomed in on the travels, so it's a backdrop rather than fog.
-    this.galaxy.setOpacity(0.1 + 0.9 * THREE.MathUtils.smoothstep(viewDistance, 1500, 40_000));
+    this.galaxy.setOpacity(this.galaxyBrightness * (0.05 + 0.95 * THREE.MathUtils.smoothstep(viewDistance, 3000, 70_000)));
 
     this.updateLabels(heads);
     this.updateHover();
@@ -487,6 +511,7 @@ export class GalaxyScene {
   dispose() {
     cancelAnimationFrame(this.animationFrame);
     this.resizeObserver.disconnect();
+    this.renderer.domElement.removeEventListener('pointerdown', this.handlePointerDown, true);
     this.renderer.domElement.removeEventListener('pointermove', this.handlePointerMove);
     this.renderer.domElement.removeEventListener('pointerleave', this.handlePointerLeave);
     this.renderer.domElement.removeEventListener('dblclick', this.handleDoubleClick);
@@ -566,9 +591,9 @@ const SYSTEM_FRAGMENT_SHADER = `
     float distanceFromCenter = length(gl_PointCoord - 0.5) * 2.0;
     if (distanceFromCenter > 1.0) discard;
     float core = smoothstep(0.35, 0.0, distanceFromCenter);
-    float halo = exp(-distanceFromCenter * distanceFromCenter * 5.0) * 0.55;
+    float halo = exp(-distanceFromCenter * distanceFromCenter * 7.0) * 0.35;
     float ring = smoothstep(0.12, 0.0, abs(distanceFromCenter - 0.8)) * vFlash;
-    vec3 color = vColor * (halo + core) + vec3(1.0) * (core * 0.6 + ring);
+    vec3 color = vColor * (halo + core * 0.8) + vec3(1.0) * (core * 0.3 + ring);
     gl_FragColor = vec4(color, 1.0);
   }
 `;
@@ -582,7 +607,7 @@ const HEAD_VERTEX_SHADER = `
   void main() {
     vColor = aColor;
     vPhase = fract(uClock * 0.7);
-    gl_PointSize = aActive > 0.5 ? 46.0 : 0.0;
+    gl_PointSize = aActive > 0.5 ? 30.0 : 0.0;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `;
@@ -593,15 +618,21 @@ const HEAD_FRAGMENT_SHADER = `
   void main() {
     float distanceFromCenter = length(gl_PointCoord - 0.5) * 2.0;
     if (distanceFromCenter > 1.0) discard;
-    float core = smoothstep(0.22, 0.0, distanceFromCenter);
-    float glow = exp(-distanceFromCenter * distanceFromCenter * 9.0);
+    float core = smoothstep(0.2, 0.05, distanceFromCenter);
+    float glow = exp(-distanceFromCenter * distanceFromCenter * 14.0) * 0.5;
     // A ring ripples outwards, like a scanner ping.
     float ring = smoothstep(0.08, 0.0, abs(distanceFromCenter - vPhase)) * (1.0 - vPhase);
-    gl_FragColor = vec4(vColor * (glow + ring * 1.2) + vec3(1.0) * core, 1.0);
+    gl_FragColor = vec4(vColor * (glow + ring * 0.9 + core * 0.5) + vec3(core * 0.5), 1.0);
   }
 `;
 
 const ADDITIVE = { transparent: true, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending };
+/**
+ * The brighter of what's there and what's drawn, instead of their sum: thousands of trails and
+ * systems overlap around the bubble, and added up they burned Sol out to a white blob that hid
+ * the trails near it. This way a crowded place is no brighter than one trail.
+ */
+const BRIGHTEST = { transparent: true, depthTest: false, depthWrite: false, blending: THREE.CustomBlending, blendEquation: THREE.MaxEquation };
 
 function buildTravel(data, pace, pointScale, timeline, clock) {
   const { jumps, systems, commanders } = data;
@@ -625,7 +656,7 @@ function buildTravel(data, pace, pointScale, timeline, clock) {
   const trailColors = new THREE.BufferAttribute(new Float32Array(segmentJumps.length * 6), 3);
   trailGeometry.setAttribute('aColor', trailColors);
   const trailMaterial = new THREE.ShaderMaterial({
-    ...ADDITIVE,
+    ...BRIGHTEST,
     uniforms: { uTime: timeline, uFade: { value: 10 }, uFloor: { value: 0.2 } },
     vertexShader: TRAIL_VERTEX_SHADER,
     fragmentShader: TRAIL_FRAGMENT_SHADER,
@@ -648,7 +679,7 @@ function buildTravel(data, pace, pointScale, timeline, clock) {
   const systemAppear = new THREE.BufferAttribute(new Float32Array(systems.length), 1);
   systemGeometry.setAttribute('aAppear', systemAppear);
   const systemMaterial = new THREE.ShaderMaterial({
-    ...ADDITIVE,
+    ...BRIGHTEST,
     uniforms: { uTime: timeline, uScale: pointScale, uPulse: { value: 1 } },
     vertexShader: SYSTEM_VERTEX_SHADER,
     fragmentShader: SYSTEM_FRAGMENT_SHADER,
@@ -668,7 +699,8 @@ function buildTravel(data, pace, pointScale, timeline, clock) {
   const headActive = new THREE.BufferAttribute(new Float32Array(commanders.length), 1);
   headGeometry.setAttribute('aActive', headActive);
   const headMaterial = new THREE.ShaderMaterial({
-    ...ADDITIVE,
+    // Commanders often sit in the same place (the bubble); stacked, they mustn't add up to a blob.
+    ...BRIGHTEST,
     uniforms: { uClock: clock },
     vertexShader: HEAD_VERTEX_SHADER,
     fragmentShader: HEAD_FRAGMENT_SHADER,
@@ -1025,11 +1057,13 @@ function createGalaxy(pointScale) {
     points.renderOrder = renderOrder;
     return points;
   };
+  // Kept low: thousands of particles overlap in the core, and on high-density screens even more of
+  // them land on each pixel, so anything brighter burns out to white and drowns the trails.
   const layers = [
-    makeLayer(haze, 0.32, THREE.AdditiveBlending, 0),
-    makeLayer(glow, 0.5, THREE.AdditiveBlending, 1),
+    makeLayer(haze, 0.13, THREE.AdditiveBlending, 0),
+    makeLayer(glow, 0.22, THREE.AdditiveBlending, 1),
     // Drawn over the glow (normal blending), so the lanes darken it.
-    makeLayer(dust, 0.4, THREE.NormalBlending, 2),
+    makeLayer(dust, 0.22, THREE.NormalBlending, 2),
   ];
   return {
     layers,

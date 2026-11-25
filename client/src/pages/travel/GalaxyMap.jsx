@@ -10,6 +10,14 @@ import { COMMANDER_COLORS, GalaxyScene, JUMP_KIND_COLORS, JUMP_KIND_LABELS } fro
 import { describeStarClass } from './star-classes.js';
 
 const SPEEDS = ['0.25', '0.5', '1', '2', '4', '8', '16'];
+/** The galaxy backdrop's brightness, as a percentage of the default (0 hides it). */
+const STORED_PERCENT = {
+  parse: (raw) => {
+    const percent = Number(raw);
+    return Number.isInteger(percent) && percent >= 0 && percent <= 200 ? percent : undefined;
+  },
+  serialize: String,
+};
 const ACTIVITY_BINS = 160;
 /** The game's calendar runs 1,286 years ahead. */
 const GAME_YEAR_OFFSET = 1286;
@@ -31,6 +39,7 @@ export default function GalaxyMap({ params, commanderFilter }) {
   const [speed, setSpeed] = useStoredState('travel.map.speed', '1', storedChoice(SPEEDS));
   const [trailStyle, setTrailStyle] = useStoredState('travel.map.trails', 'trail', storedChoice(['trail', 'comet']));
   const [storedColorMode, setColorMode] = useStoredState('travel.map.colors', 'type', storedChoice(['type', 'commander']));
+  const [galaxyBrightness, setGalaxyBrightness] = useStoredState('travel.map.galaxyBrightness', 100, STORED_PERCENT);
   const data = mapRequest.data;
   const commanderCount = data?.commanders.length ?? 0;
   const colorMode = commanderCount > 1 ? storedColorMode : 'type';
@@ -54,6 +63,7 @@ export default function GalaxyMap({ params, commanderFilter }) {
   useEffect(() => { sceneRef.current?.setTrailStyle(trailStyle); }, [trailStyle]);
   useEffect(() => { sceneRef.current?.setColorMode(colorMode); }, [colorMode]);
   useEffect(() => { sceneRef.current?.setFollowing(isFollowing); }, [isFollowing]);
+  useEffect(() => { sceneRef.current?.setGalaxyBrightness(galaxyBrightness / 100); }, [galaxyBrightness]);
 
   // New data: the same filters again (a live update) keeps the view; other filters re-frame it.
   const dataKey = JSON.stringify(params);
@@ -161,6 +171,18 @@ export default function GalaxyMap({ params, commanderFilter }) {
           <option value="trail">Full trails</option>
           <option value="comet">Comet trails</option>
         </select>
+        <label className="galaxy-brightness" title="How bright the galaxy behind the trails is (0 hides it)">
+          Galaxy
+          <input
+            type="range"
+            min={0}
+            max={200}
+            step={10}
+            value={galaxyBrightness}
+            onChange={(changeEvent) => setGalaxyBrightness(Number(changeEvent.target.value))}
+            aria-label="Galaxy brightness"
+          />
+        </label>
         {commanderCount > 1 && (
           <select value={colorMode} onChange={(changeEvent) => setColorMode(changeEvent.target.value)} aria-label="Colour trails by">
             <option value="type">Colour by jump type</option>
