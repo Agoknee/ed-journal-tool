@@ -1,5 +1,8 @@
 import { useEffect, useState } from 'react';
-import { AUTH_REQUIRED_EVENT } from '../api.js';
+import { AUTH_REQUIRED_EVENT, postJson } from '../api.js';
+
+/** How often the login status is checked again while EDJT can't be reached. */
+const STATUS_RETRY_MS = 3000;
 
 /**
  * Shows the dashboard once the API can be used: always on the computer running EDJT, and on other
@@ -21,6 +24,7 @@ export default function AuthGate({ children }) {
 
   useEffect(() => {
     let isCurrent = true;
+    let retryTimer = null;
     fetch('/api/auth/status')
       .then((response) => response.json())
       .then((nextStatus) => {
@@ -29,10 +33,14 @@ export default function AuthGate({ children }) {
         setProblem(null);
       })
       .catch(() => {
-        if (isCurrent) setProblem('EDJT isn’t answering. Is it running?');
+        if (!isCurrent) return;
+        setProblem('Can’t reach EDJT. Check that ED Journal Tool is running (and, on another device, that it’s on the same network). This page carries on by itself once it’s back.');
+        // Tried again until it answers. (A dashboard already shown stays, with its own banner.)
+        retryTimer = setTimeout(() => setCheckCount((count) => count + 1), STATUS_RETRY_MS);
       });
     return () => {
       isCurrent = false;
+      clearTimeout(retryTimer);
     };
   }, [checkCount]);
 
@@ -68,13 +76,7 @@ function LoginForm() {
     setIsSubmitting(true);
     setError(null);
     try {
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password }),
-      });
-      const result = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(result.error ?? `Login failed (${response.status})`);
+      await postJson('/api/auth/login', { password });
       // Started afresh, so the live updates connect with the new session.
       window.location.reload();
     } catch (loginError) {

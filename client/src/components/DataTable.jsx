@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useLiveUpdates } from '../hooks/live-updates-context.js';
 import { readTableSettings, SETTINGS_CHANGE_EVENT, updateTableSettings } from '../hooks/table-settings.js';
 import TableSettingsDialog from './TableSettingsDialog.jsx';
 
@@ -30,6 +31,7 @@ export default function DataTable({
   emptyMessage = 'No rows.',
   isLoading,
 }) {
+  const { isUnreachable } = useLiveUpdates();
   const [settings, setSettings] = useState(() => readTableSettings(tableId));
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [clientPage, setClientPage] = useState({ offset: 0, resetKey: pageResetKey });
@@ -164,7 +166,12 @@ export default function DataTable({
           </thead>
           <tbody>
             {displayedRows.length === 0 && (
-              <tr><td colSpan={visibleColumns.length} className="empty-cell">{emptyMessage}</td></tr>
+              <tr>
+                <td colSpan={visibleColumns.length} className="empty-cell">
+                  {/* An empty table while EDJT can't be reached most likely just hasn't loaded ("No missions yet" would mislead). */}
+                  {isUnreachable ? 'Not loaded yet. It loads once EDJT is back.' : emptyMessage}
+                </td>
+              </tr>
             )}
             {displayedRows.map((row, rowIndex) => (
               <tr

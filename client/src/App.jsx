@@ -274,6 +274,7 @@ export default function App() {
             </select>
           </label>
         </header>
+        <ConnectionBanner />
         <JournalFolderBanner />
         <ScanBanner />
         <StatsBuildBanner />
@@ -287,11 +288,37 @@ export default function App() {
 
 /** Status dot tone and text for the server connection and journal watch state. */
 function useConnectionState(activeJournalCount) {
-  const { isConnected } = useLiveUpdates();
+  const { isConnected, disconnectedAt, isUnreachable } = useLiveUpdates();
   if (isConnected && activeJournalCount > 0) return { statusTone: 'live', statusText: `Active Journals: ${activeJournalCount}` };
   if (isConnected && activeJournalCount === 0) return { statusTone: 'warning', statusText: 'No Active Journals' };
-  if (isConnected) return { statusTone: 'warning', statusText: 'Connecting…' };
-  return { statusTone: 'danger', statusText: 'EDJT Not Running' };
+  // Connected but the commanders not loaded yet, or (page just opened) not connected yet.
+  if (isConnected || !disconnectedAt) return { statusTone: 'warning', statusText: 'Connecting…' };
+  // Changes along with the banner: until then, it's most likely a restart.
+  if (!isUnreachable) return { statusTone: 'warning', statusText: 'Reconnecting…' };
+  return { statusTone: 'danger', statusText: 'Can’t Reach EDJT' };
+}
+
+/**
+ * Shown when EDJT can't be reached (not running, restarting for a while, or this device can't
+ * connect): what's on screen is from before, and it catches up by itself once EDJT is back. Not
+ * for the first few seconds (see isUnreachable), so a restart doesn't flash it.
+ */
+function ConnectionBanner() {
+  const { isUnreachable, disconnectedAt } = useLiveUpdates();
+  // The last /api/status loaded (this page keeps it): whether this is EDJT's own computer.
+  const statusRequest = useApi('/api/status', {}, ['clock']);
+  if (!isUnreachable || !disconnectedAt) return null;
+  const since = new Date(disconnectedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const isLocal = statusRequest.data?.isLocal;
+  return (
+    <div className="notice notice-error connection-banner" role="status">
+      <strong>Can’t reach EDJT</strong> (since {since}).{' '}
+      {isLocal === false
+        ? 'Check that ED Journal Tool is running on its computer, and that this device is on the same network. '
+        : 'Check that ED Journal Tool is running. '}
+      What’s shown is from before then and may be out of date. It catches up by itself as soon as EDJT is back.
+    </div>
+  );
 }
 
 const TICK_AGE_REFRESH_MS = 60 * 1000;
@@ -431,7 +458,12 @@ function ConnectionStatus({ activeJournalCount, isActive }) {
   );
 }
 
-/** Warns when the server's clock is off from the game server's, since carrier timers depend on it. */
+/**
+ * Warns when the server's clock is off from the game server's, since carrier timers depend on it.
+ * On the Windows computer itself, it links to Windows' Date & Time settings, whose "Sync now"
+ * needs no administrator rights (EDJT can't sync the clock itself without them). The browser asks
+ * before opening it.
+ */
 function ClockBanner() {
   const statusRequest = useApi('/api/status', {}, ['clock']);
   const clockStatus = statusRequest.data?.clock;
@@ -439,8 +471,11 @@ function ClockBanner() {
   const direction = clockStatus.offsetSeconds > 0 ? 'ahead of' : 'behind';
   return (
     <div className="notice notice-warning">
-      This computer's clock is about {Math.abs(clockStatus.offsetSeconds).toFixed(1)}s {direction} the game server, so carrier
-      jump and cooldown timers will be off by that much. Synchronize the system clock to fix it.
+      {statusRequest.data.isLocal ? 'This computer' : 'The EDJT computer'}'s clock is about {Math.abs(clockStatus.offsetSeconds).toFixed(1)}s {direction} the game server, so carrier
+      jump and cooldown timers will be off by that much.{' '}
+      {statusRequest.data.canOpenTimeSettings
+        ? <>Synchronize the clock to fix it: <a href="ms-settings:dateandtime">open Date &amp; Time settings</a> and click <b>Sync now</b>.</>
+        : 'Synchronize the system clock to fix it.'}
     </div>
   );
 }

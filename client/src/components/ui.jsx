@@ -1,6 +1,7 @@
 /**
  * Small presentational building blocks shared by the dashboard pages.
  */
+import { useLiveUpdates } from '../hooks/live-updates-context.js';
 import CopyableText from './CopyableText.jsx';
 
 /** `id` makes the section a target for the sidebar's sub-section links. */
@@ -102,11 +103,32 @@ export function KeyValueList({ items }) {
   );
 }
 
+/**
+ * A request's data, or what to show instead. Data already loaded is still shown when a refresh
+ * fails: while EDJT can't be reached the connection banner at the top says so, so nothing is shown
+ * here; another failure gets a note above it. Without data, it's "Loading…", a short note when
+ * EDJT can't be reached (it loads by itself once it's back), or the error.
+ *
+ * "Can't be reached" is either this request failing that way, or the live updates being down: a
+ * request waiting on another's answer (a commander's details on the commander list) never starts
+ * then, so it would otherwise say "Loading…" for as long as EDJT is away.
+ */
 export function LoadingState({ requestState, children, emptyMessage = 'No data yet.' }) {
-  if (requestState.error) return <div className="notice notice-error">Error: {requestState.error.message}</div>;
-  if (!requestState.data) return <div className="notice">Loading…</div>;
-  const content = children(requestState.data);
-  return content ?? <div className="notice">{emptyMessage}</div>;
+  const { data, error } = requestState;
+  const { isUnreachable } = useLiveUpdates();
+  if (data) {
+    const content = children(data) ?? <div className="notice">{emptyMessage}</div>;
+    if (!error || error.isUnreachable) return content;
+    return (
+      <>
+        <div className="notice notice-warning">Couldn’t refresh this: {error.message} It shows what was loaded before.</div>
+        {content}
+      </>
+    );
+  }
+  if (error?.isUnreachable || (!error && isUnreachable)) return <div className="notice">Not loaded yet. It loads once EDJT is back.</div>;
+  if (error) return <div className="notice notice-error">Couldn’t load this: {error.message}</div>;
+  return <div className="notice">Loading…</div>;
 }
 
 export function ProgressBar({ value, max, label }) {

@@ -65,4 +65,13 @@ Tags like `@v4` can be moved by whoever controls the action (as happened to tj-a
 Scanning, building stats and compressing entries each have a banner, from `scan`, `statsBuild` and `compression` updates (also in `/api/status` for a page opened midway), sent at most every second. Small stats updates while playing aren't shown, so nothing flickers.
 
 ### Requests share results and refresh by topic
-`client/src/hooks/use-api.js`. Components asking for the same thing share one request for a few seconds. Each request names the live-update topics it refreshes on; the server announces changes per topic (and per stat module), so only what changed refetches.
+`client/src/hooks/use-api.js`. Components asking for the same thing share one request for a few seconds. Each request names the live-update topics it refreshes on; the server announces changes per topic (and per stat module), so only what changed refetches. The shared result's key includes the topic **names** as well as their counts: keyed by counts alone, the clock warning (refreshing on `clock`) was handed a status the scan banner (on `scan`) had fetched before the clock was checked.
+
+### Reconnecting refetches everything
+`client/src/hooks/LiveUpdatesProvider.jsx`. Whatever the server announced while the live updates were down (a restart, typically) was missed, so a reconnect bumps a counter every request includes, and drops progress from before. The browser gives up on a stream that gets an answer other than the stream; then it's opened anew after a few seconds (and the login checked again, so a device whose session ended gets the login screen rather than endless retries).
+
+### While EDJT can't be reached, keep what's on screen
+`client/src/api.js`, `hooks/use-api.js`, `components/ui.jsx`. Once the stream has been down for 4 seconds (a restart takes about that) `isUnreachable` turns on, and the banner, the sidebar status, the sections and the tables all go by it. Requests that fail because EDJT doesn't answer throw `UnreachableError`; sections keep the data they had and the banner explains, sections without any say "Not loaded yet" (including ones waiting on another request's answer, which never start). The last response per URL is kept in memory (8 MB of JSON, least recently fetched first) so a page opened again shows its data at once. Not kept in IndexedDB: it works over plain HTTP, but with EDJT down the page itself can't load to read it — that needs a service worker, so HTTPS (see Access). Open the pages you'll want before EDJT goes away.
+
+### The clock can't be synced from EDJT
+On Windows a normal user can't start the time service, run `w32tm /resync` or the sync task; on Linux syncing needs polkit authorisation, which a service can't prompt for (and a Steam Deck has no password by default). So the clock warning links to Windows' Date & Time settings ("Sync now" needs no admin) on the Windows computer itself, and says "the EDJT computer" on other devices.

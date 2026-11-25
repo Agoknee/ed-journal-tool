@@ -3,7 +3,7 @@ import path from 'node:path';
 import express from 'express';
 import { appVersion } from '../cli.mjs';
 import { logger } from '../logger.mjs';
-import { createAuth } from './auth.mjs';
+import { createAuth, isLocalRequest } from './auth.mjs';
 import { createBgsAdjustmentRoutes } from './routes/bgs-adjustment-routes.mjs';
 import { createDatabaseRoutes } from './routes/database-routes.mjs';
 import { createEventRoutes } from './routes/event-routes.mjs';
@@ -61,6 +61,10 @@ export function createServer({ database, databasePath, statsEngine, journalMonit
       statsBuild: statsEngine.buildProgress,
       compression: compression?.status ?? null,
       clock: clockMonitor.status,
+      // Whether this is the computer running EDJT (the clock warning says "this computer" there), and
+      // whether its link to Windows' Date & Time settings works (only on that computer).
+      isLocal: isLocalRequest(request),
+      canOpenTimeSettings: process.platform === 'win32' && isLocalRequest(request),
       statModules: statsEngine.getModuleSummaries(),
     });
   });

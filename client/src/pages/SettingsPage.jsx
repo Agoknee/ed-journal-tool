@@ -65,7 +65,9 @@ function DatabaseSection({ needsPassword }) {
       title="Database"
       description="Everything EDJT has read from your journals, and what you've added (notes, BGS adjustments). Journal files are only ever read, never changed."
     >
-      {databaseRequest.error && <div className="notice notice-error">{databaseRequest.error.message}</div>}
+      {/* While EDJT can't be reached, the banner at the top says so; the last figures stay. */}
+      {databaseRequest.error && !databaseRequest.error.isUnreachable && <div className="notice notice-error">{databaseRequest.error.message}</div>}
+      {!database && databaseRequest.error?.isUnreachable && <div className="notice">Not loaded yet: EDJT can’t be reached.</div>}
       {database && (
         <>
           <StatGrid>
