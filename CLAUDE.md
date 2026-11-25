@@ -12,6 +12,7 @@ Read before changing an area:
 ```sh
 npm install && npm run client:install   # both package trees
 npm start              # dev: server + Vite (hot reload) on http://localhost:4267
+npm run restart        # restart the dev server, whoever started it (background, log in %TEMP%\edjt-dev)
 npm test               # node --test test/
 npm run lint           # oxlint, server and client
 npm run client:build   # client/dist
@@ -19,7 +20,7 @@ npm run dist           # executables in dist/ (Windows .exe, Linux binary and in
 node src/index.mjs --help
 ```
 
-The client hot-reloads; server changes need the server restarted.
+The client hot-reloads; server changes need the server restarted (`npm run restart`).
 
 ## Rules
 

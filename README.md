@@ -78,6 +78,8 @@ npm run build          # builds the dashboard into client/dist
 npm start              # serves the dashboard from source with Vite (hot reload)
 npm run start:built    # serves the built dashboard from client/dist (run npm run build first)
 npm run debug          # same as npm start, with verbose logging (npm run debug:built for the built dashboard)
+npm run restart        # stops the running server (however it was started) and starts it again in the background
+                       # with the same options (or: npm run restart -- <options>), logging to %TEMP%\edjt-dev\dev-server.log
 npm run dist           # builds dist/ed-journal-tool-<version> (Linux) and .exe (Windows), client included
 ```
 
