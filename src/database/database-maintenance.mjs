@@ -95,7 +95,18 @@ export function getDatabaseStats(database, databasePath) {
     bgsAdjustmentCount: single('SELECT COUNT(*) AS count FROM bgs_adjustments').count,
     tickCount: single('SELECT COUNT(*) AS count FROM bgs_ticks').count,
     resetCopies: listResetCopies(databasePath),
+    disk: getDiskSpace(databasePath),
   };
+}
+
+/** Free and total space on the disk the database is on, or null where the system can't say. */
+function getDiskSpace(databasePath) {
+  try {
+    const disk = statfsSync(path.dirname(databasePath));
+    return { freeBytes: Number(disk.bavail) * Number(disk.bsize), totalBytes: Number(disk.blocks) * Number(disk.bsize) };
+  } catch {
+    return null;
+  }
 }
 
 /**

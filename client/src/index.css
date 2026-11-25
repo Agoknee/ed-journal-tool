@@ -158,6 +158,7 @@ button.last-tick:hover { border-color: var(--color-border); }
 .stat-card-accent .stat-value { color: var(--color-accent); }
 .stat-card-live .stat-value { color: var(--color-live); }
 .stat-card-danger .stat-value { color: var(--color-danger); }
+.stat-card-warning .stat-value { color: var(--color-warning); }
 /* Grouped stat cards: wider than single stats, with a few quiet label/value lines under the headline. */
 .stat-grid-groups { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
 .stat-unit { font-size: 0.9rem; font-weight: 400; color: var(--color-text-muted); }

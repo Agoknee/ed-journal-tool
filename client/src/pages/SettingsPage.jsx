@@ -42,9 +42,20 @@ export default function SettingsPage() {
   );
 }
 
+const DATABASE_REFRESH_MS = 30 * 1000;
+
 /** The database: its size on disk and what it holds, a link to the journals, and resetting it. */
 function DatabaseSection({ needsPassword }) {
-  const databaseRequest = useApi('/api/database', {}, ['journals', 'scan', 'stats']);
+  // Fetched again every 30 seconds while this page is open (and the browser tab showing), so the
+  // disk's free space stays current while the game is closed; more often as journals change.
+  const [refreshCount, setRefreshCount] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') setRefreshCount((count) => count + 1);
+    }, DATABASE_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, []);
+  const databaseRequest = useApi('/api/database', { refresh: refreshCount || undefined }, ['journals', 'scan', 'stats']);
   const database = databaseRequest.data;
   const [isResetOpen, setIsResetOpen] = useState(false);
 
@@ -53,7 +64,6 @@ function DatabaseSection({ needsPassword }) {
       id="settings-database"
       title="Database"
       description="Everything EDJT has read from your journals, and what you've added (notes, BGS adjustments). Journal files are only ever read, never changed."
-      actions={<a className="button" href="#/journals">Open Journals</a>}
     >
       {databaseRequest.error && <div className="notice notice-error">{databaseRequest.error.message}</div>}
       {database && (
@@ -79,7 +89,14 @@ function DatabaseSection({ needsPassword }) {
               value={formatNumber(database.noteCount + database.bgsAdjustmentCount)}
               detail={`${formatNumber(database.noteCount)} notes, ${formatNumber(database.bgsAdjustmentCount)} BGS adjustments`}
             />
-            <StatCard label="BGS Ticks Seen" value={formatNumber(database.tickCount)} />
+            {database.disk && (
+              <StatCard
+                label="Disk Free"
+                value={formatBytes(database.disk.freeBytes)}
+                detail={`of ${formatBytes(database.disk.totalBytes)} on the database's disk`}
+                tone={database.disk.freeBytes < database.sizeOnDisk.totalBytes ? 'warning' : undefined}
+              />
+            )}
             {database.resetCopies.length > 0 && (
               <StatCard
                 label="Copies Kept on Reset"
@@ -91,13 +108,11 @@ function DatabaseSection({ needsPassword }) {
           <p className="muted small settings-path">
             <CopyableText copyText={database.path}>{database.path}</CopyableText>
           </p>
-          {isResetOpen
-            ? <ResetDatabase database={database} needsPassword={needsPassword} onClose={() => setIsResetOpen(false)} />
-            : (
-              <div className="settings-actions">
-                <button type="button" className="button-danger" onClick={() => setIsResetOpen(true)}>Reset Database…</button>
-              </div>
-            )}
+          <div className="settings-actions">
+            <a className="button" href="#/journals">Journal Details</a>
+            {!isResetOpen && <button type="button" className="button-danger" onClick={() => setIsResetOpen(true)}>Reset Database…</button>}
+          </div>
+          {isResetOpen && <ResetDatabase database={database} needsPassword={needsPassword} onClose={() => setIsResetOpen(false)} />}
         </>
       )}
     </Section>
