@@ -5,6 +5,8 @@ import { LiveUpdatesContext } from './live-updates-context.js';
 /** Refreshes are throttled so a busy play session doesn't refetch on every journal line. */
 const REFRESH_THROTTLE_MS = 1500;
 const UPDATE_TOPICS = ['journals', 'stats', 'scan', 'statsBuild', 'compression', 'clock', 'notes', 'ticks', 'adjustments', 'shipStatus'];
+/** Restarting takes a few seconds: EDJT counts as unreachable once the stream has been down this long. */
+const UNREACHABLE_AFTER_MS = 4000;
 /** How long to wait before opening the stream again once the browser has given up on it. */
 const REOPEN_DELAY_MS = 3000;
 /** Topics that are only progress to show, with nothing to refetch. */
@@ -19,6 +21,11 @@ const PROGRESS_TOPICS = new Set(['statsBuild', 'compression']);
 export function LiveUpdatesProvider({ children }) {
   const [versions, setVersions] = useState({});
   const [isConnected, setIsConnected] = useState(false);
+  // When the connection was lost (or first failed), for the connection banner; null while connected.
+  const [disconnectedAt, setDisconnectedAt] = useState(null);
+  // Lost for longer than a restart takes: what the banner, the sidebar status and the sections
+  // go by, so they all change together (and a quick restart only shows "Reconnecting…").
+  const [isUnreachable, setIsUnreachable] = useState(false);
   const [lastUpdate, setLastUpdate] = useState(null);
   const [scanProgress, setScanProgress] = useState(null);
   const [statsBuildProgress, setStatsBuildProgress] = useState(null);
@@ -34,6 +41,7 @@ export function LiveUpdatesProvider({ children }) {
     let eventSource = null;
     let hasOpened = false;
     let reopenTimer = null;
+    let unreachableTimer = null;
 
     const flushPendingTopics = () => {
       throttleTimerRef.current = null;
@@ -64,6 +72,10 @@ export function LiveUpdatesProvider({ children }) {
 
     const handleOpen = () => {
       setIsConnected(true);
+      setDisconnectedAt(null);
+      clearTimeout(unreachableTimer);
+      unreachableTimer = null;
+      setIsUnreachable(false);
       // The first connection follows the page's own first requests; a later one follows a gap.
       if (hasOpened) {
         // Progress from before is stale (a restarted server's scan isn't the old one), so the
@@ -85,6 +97,8 @@ export function LiveUpdatesProvider({ children }) {
      */
     const handleError = () => {
       setIsConnected(false);
+      setDisconnectedAt((since) => since ?? Date.now());
+      unreachableTimer ??= setTimeout(() => setIsUnreachable(true), UNREACHABLE_AFTER_MS);
       if (eventSource.readyState !== EventSource.CLOSED || reopenTimer) return;
       window.dispatchEvent(new Event(AUTH_REQUIRED_EVENT));
       reopenTimer = setTimeout(() => {
@@ -105,12 +119,13 @@ export function LiveUpdatesProvider({ children }) {
     return () => {
       eventSource.close();
       clearTimeout(reopenTimer);
+      clearTimeout(unreachableTimer);
       clearTimeout(throttleTimerRef.current);
     };
   }, []);
 
   return (
-    <LiveUpdatesContext.Provider value={{ versions, isConnected, lastUpdate, scanProgress, statsBuildProgress, compressionProgress, reconnectCount }}>
+    <LiveUpdatesContext.Provider value={{ versions, isConnected, disconnectedAt, isUnreachable, lastUpdate, scanProgress, statsBuildProgress, compressionProgress, reconnectCount }}>
       {children}
     </LiveUpdatesContext.Provider>
   );
