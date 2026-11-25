@@ -135,6 +135,7 @@ On the next launch, a new module processes all stored entries. Bumping `version`
 | --- | --- |
 | `GET /api/auth/status`, `POST /api/auth/login` `{ password }`, `POST /api/auth/logout` | Whether a login is needed; logging in and out (other devices) |
 | `GET /api/settings`, `PATCH /api/settings` | Settings; `PUT /api/settings/password` `{ newPassword, currentPassword? }`, `DELETE /api/settings/password` |
+| `GET /api/database`, `POST /api/database/reset` `{ confirmation: "RESET", currentPassword? }` | Size on disk and what's stored; deleting everything and reading the journals again (the password is needed from other devices) |
 | `GET /api/status` | Scan progress, module status |
 | `GET /api/commanders` | Commander list |
 | `GET /api/journals`, `/api/journals/summary`, `/api/journals/:id/entries` | Journal files, counts, active files, raw entries |

@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { fetchJson, postJson, putJson } from '../api.js';
-import { Badge, Section } from '../components/ui.jsx';
+import CopyableText from '../components/CopyableText.jsx';
+import { Badge, Section, StatCard, StatGrid } from '../components/ui.jsx';
+import { formatBytes, formatDateTime, formatNumber } from '../format.js';
+import { useApi } from '../hooks/use-api.js';
 
 /**
  * Settings, kept by the server in settings.json in its data folder. For now, the password other
@@ -31,7 +34,168 @@ export default function SettingsPage() {
 
   if (loadError) return <div className="notice notice-error">{loadError}</div>;
   if (!state) return <p className="muted">Loading…</p>;
-  return <PasswordSection hasPassword={state.hasPassword} isLocal={state.isLocal} onChanged={() => setLoadCount((count) => count + 1)} />;
+  return (
+    <>
+      <PasswordSection hasPassword={state.hasPassword} isLocal={state.isLocal} onChanged={() => setLoadCount((count) => count + 1)} />
+      <DatabaseSection needsPassword={state.hasPassword && !state.isLocal} />
+    </>
+  );
+}
+
+/** The database: its size on disk and what it holds, a link to the journals, and resetting it. */
+function DatabaseSection({ needsPassword }) {
+  const databaseRequest = useApi('/api/database', {}, ['journals', 'scan', 'stats']);
+  const database = databaseRequest.data;
+  const [isResetOpen, setIsResetOpen] = useState(false);
+
+  return (
+    <Section
+      id="settings-database"
+      title="Database"
+      description="Everything EDJT has read from your journals, and what you've added (notes, BGS adjustments). Journal files are only ever read, never changed."
+      actions={<a className="button" href="#/journals">Open Journals</a>}
+    >
+      {databaseRequest.error && <div className="notice notice-error">{databaseRequest.error.message}</div>}
+      {database && (
+        <>
+          <StatGrid>
+            <StatCard
+              label="Size on Disk"
+              value={formatBytes(database.sizeOnDisk.totalBytes)}
+              detail={`${formatBytes(database.sizeOnDisk.freeBytes)} free inside${database.sizeOnDisk.walBytes > 0 ? `, ${formatBytes(database.sizeOnDisk.walBytes)} write-ahead log` : ''}`}
+            />
+            <StatCard label="Journal Entries" value={formatNumber(database.entryCount)} detail={database.firstEntryAt ? `${formatDateTime(database.firstEntryAt)} to ${formatDateTime(database.lastEntryAt)}` : 'None yet'} />
+            <StatCard
+              label="Journal Files"
+              value={formatNumber(database.journalFiles.total)}
+              detail={[
+                database.journalFiles.missing > 0 && `${formatNumber(database.journalFiles.missing)} no longer on disk`,
+                database.journalFiles.corrupt > 0 && `${formatNumber(database.journalFiles.corrupt)} unreadable`,
+              ].filter(Boolean).join(', ') || null}
+            />
+            <StatCard label="Commanders" value={formatNumber(database.commanderCount)} />
+            <StatCard
+              label="Your Additions"
+              value={formatNumber(database.noteCount + database.bgsAdjustmentCount)}
+              detail={`${formatNumber(database.noteCount)} notes, ${formatNumber(database.bgsAdjustmentCount)} BGS adjustments`}
+            />
+            <StatCard label="BGS Ticks Seen" value={formatNumber(database.tickCount)} />
+            {database.resetCopies.length > 0 && (
+              <StatCard
+                label="Copies Kept on Reset"
+                value={formatNumber(database.resetCopies.length)}
+                detail={`${formatBytes(database.resetCopies.reduce((total, copy) => total + copy.bytes, 0))}, beside the database (delete them when you no longer need them)`}
+              />
+            )}
+          </StatGrid>
+          <p className="muted small settings-path">
+            <CopyableText copyText={database.path}>{database.path}</CopyableText>
+          </p>
+          {isResetOpen
+            ? <ResetDatabase database={database} needsPassword={needsPassword} onClose={() => setIsResetOpen(false)} />
+            : (
+              <div className="settings-actions">
+                <button type="button" className="button-danger" onClick={() => setIsResetOpen(true)}>Reset Database…</button>
+              </div>
+            )}
+        </>
+      )}
+    </Section>
+  );
+}
+
+/**
+ * Resetting the database, behind strong confirmation: what's lost is spelled out, and it takes
+ * ticking that it can't be undone and typing the confirmation word (and the password, from
+ * another device).
+ */
+function ResetDatabase({ database, needsPassword, onClose }) {
+  const [keepCopy, setKeepCopy] = useState(true);
+  const [hasAcknowledged, setHasAcknowledged] = useState(false);
+  const [typed, setTyped] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [error, setError] = useState(null);
+  const [isResetting, setIsResetting] = useState(false);
+  const [result, setResult] = useState(null);
+  const confirmation = database.resetConfirmation;
+  const canReset = hasAcknowledged && typed === confirmation && (!needsPassword || currentPassword) && !isResetting && !database.resetBlockedReason;
+
+  async function reset(submitEvent) {
+    submitEvent.preventDefault();
+    setIsResetting(true);
+    setError(null);
+    try {
+      setResult(await postJson('/api/database/reset', { confirmation: typed, keepCopy, currentPassword: needsPassword ? currentPassword : undefined }));
+    } catch (resetError) {
+      setError(resetError.message);
+    } finally {
+      setIsResetting(false);
+    }
+  }
+
+  if (result) {
+    return (
+      <div className="notice notice-info reset-database">
+        The database has been reset. The journals still in your journal folder are being read again; the banners at the top
+        show how far along it is.
+        {result.copy && (
+          <p>
+            The copy kept ({formatBytes(result.copy.bytes)}): <CopyableText copyText={result.copy.path}>{result.copy.path}</CopyableText>
+          </p>
+        )}
+        <button type="button" onClick={onClose}>Close</button>
+      </div>
+    );
+  }
+
+  return (
+    <form className="settings-form reset-database" onSubmit={reset}>
+      <div className="notice notice-error">
+        <strong>
+          {keepCopy
+            ? 'This deletes everything in the database. Only the copy kept can bring it back.'
+            : 'This deletes everything in the database, and it can’t be undone or recovered.'}
+        </strong>
+        <ul>
+          <li>All {formatNumber(database.entryCount)} stored journal entries. Journals that are no longer in your journal folder (deleted, or from another computer) can’t be read again{database.journalFiles.missing > 0 ? `: ${formatNumber(database.journalFiles.missing)} of them right now` : ''}.</li>
+          <li>Your notes ({formatNumber(database.noteCount)}) and manual BGS adjustments ({formatNumber(database.bgsAdjustmentCount)}).</li>
+          <li>The BGS tick history ({formatNumber(database.tickCount)} ticks), which can’t be read from journals.</li>
+        </ul>
+        Afterwards, the journals still in your journal folder are read again from scratch, which can take several minutes. Settings
+        (like the password) are kept.
+      </div>
+      <label className="checkbox-label">
+        <input type="checkbox" checked={keepCopy} onChange={(changeEvent) => setKeepCopy(changeEvent.target.checked)} />
+        Keep a copy of the database first (about {formatBytes(database.sizeOnDisk.totalBytes - database.sizeOnDisk.freeBytes - database.sizeOnDisk.walBytes)}, beside it)
+      </label>
+      {keepCopy && (
+        <p className="muted small">
+          To go back to the copy later: quit EDJT, delete the database file and any files beside it ending in -wal or -shm, then rename the
+          copy to the database’s name.
+        </p>
+      )}
+      {database.resetBlockedReason && <div className="notice notice-warning">{database.resetBlockedReason}</div>}
+      <label className="checkbox-label">
+        <input type="checkbox" checked={hasAcknowledged} onChange={(changeEvent) => setHasAcknowledged(changeEvent.target.checked)} />
+        {keepCopy ? 'I understand that this deletes my data from EDJT.' : 'I understand that this deletes my data permanently.'}
+      </label>
+      <label>
+        <span>Type {confirmation} to confirm</span>
+        <input type="text" autoComplete="off" spellCheck={false} value={typed} onChange={(changeEvent) => setTyped(changeEvent.target.value)} />
+      </label>
+      {needsPassword && (
+        <label>
+          <span>Password</span>
+          <input type="password" autoComplete="current-password" value={currentPassword} onChange={(changeEvent) => setCurrentPassword(changeEvent.target.value)} />
+        </label>
+      )}
+      {error && <div className="notice notice-error">{error}</div>}
+      <div className="settings-actions">
+        <button type="submit" className="button-danger" disabled={!canReset}>{isResetting ? 'Resetting…' : 'Delete Everything and Read the Journals Again'}</button>
+        <button type="button" onClick={onClose} disabled={isResetting}>Cancel</button>
+      </div>
+    </form>
+  );
 }
 
 const MIN_PASSWORD_LENGTH = 8;

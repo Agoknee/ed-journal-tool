@@ -44,13 +44,34 @@ export function getEntryCodec(database) {
   return codec;
 }
 
+/**
+ * Bumped when every dictionary is deleted (a database reset): each connection's codec then forgets
+ * the dictionaries it has loaded, as new ones will reuse their ids.
+ */
+let dictionaryGeneration = 0;
+
+/** After every stored dictionary is deleted: makes every connection's codec forget its own. */
+export function forgetEntryDictionaries() {
+  dictionaryGeneration += 1;
+}
+
 function createEntryCodec(database) {
   const selectDictionary = database.prepare('SELECT dictionary FROM entry_dictionaries WHERE id = ?');
   const selectNewestDictionary = database.prepare('SELECT id, dictionary FROM entry_dictionaries ORDER BY id DESC LIMIT 1');
   const dictionaries = new Map();
   let currentDictionaryId = 0;
+  let loadedGeneration = dictionaryGeneration;
+
+  function forgetIfStale() {
+    if (loadedGeneration === dictionaryGeneration) return;
+    loadedGeneration = dictionaryGeneration;
+    dictionaries.clear();
+    currentDictionaryId = 0;
+    loadNewestDictionary();
+  }
 
   function loadNewestDictionary() {
+    forgetIfStale();
     const row = selectNewestDictionary.get();
     if (!row) return;
     dictionaries.set(row.id, Buffer.from(row.dictionary));
@@ -73,6 +94,7 @@ function createEntryCodec(database) {
   return {
     /** The dictionary new entries are compressed with (0: none yet). */
     get dictionaryId() {
+      forgetIfStale();
       return currentDictionaryId;
     },
     loadNewestDictionary,
@@ -84,6 +106,7 @@ function createEntryCodec(database) {
      * @returns {Uint8Array | string}
      */
     encode(text) {
+      forgetIfStale();
       const bytes = Buffer.from(text, 'utf8');
       if (bytes.toString('utf8') !== text) return text;
       const options = { level: COMPRESSION_LEVEL };
@@ -102,6 +125,7 @@ function createEntryCodec(database) {
      */
     decode(stored) {
       if (typeof stored === 'string') return stored;
+      forgetIfStale();
       const dictionaryId = stored[0];
       const compressed = stored.subarray(1);
       const text = dictionaryId === 0

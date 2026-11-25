@@ -110,7 +110,7 @@ const PAGES = [
     ],
   },
   { id: 'chat', label: 'Chat', component: ChatPage },
-  { id: 'settings', label: 'Settings', component: SettingsPage, subSections: [{ label: 'Password' }] },
+  { id: 'settings', label: 'Settings', component: SettingsPage, subSections: [{ label: 'Password' }, { label: 'Database', targetId: 'settings-database' }] },
   // Opened from the connection status at the bottom of the sidebar instead of the nav.
   { id: 'journals', label: 'Journals', component: JournalsPage, isHiddenFromNav: true },
 ];

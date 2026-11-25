@@ -108,7 +108,7 @@ function passwordProblem(password) {
  * @param {object} options
  * @param {import('../settings/settings-store.mjs').SettingsStore} options.settings
  * @param {(request: import('express').Request) => boolean} [options.isLocal]  (for tests)
- * @returns {{ protectApi: import('express').RequestHandler, refuseOtherSites: import('express').RequestHandler, authRouter: import('express').Router, settingsRouter: import('express').Router }}
+ * @returns {{ protectApi: import('express').RequestHandler, refuseOtherSites: import('express').RequestHandler, authRouter: import('express').Router, settingsRouter: import('express').Router, hasPassword: () => boolean, checkCurrentPassword: (request: import('express').Request, response: import('express').Response) => Promise<boolean> }}
  */
 export function createAuth({ settings, isLocal = isLocalRequest }) {
   const failedLogins = new Map();
@@ -239,5 +239,5 @@ export function createAuth({ settings, isLocal = isLocalRequest }) {
     response.json({ hasPassword: false });
   });
 
-  return { protectApi, refuseOtherSites, authRouter, settingsRouter, hasPassword };
+  return { protectApi, refuseOtherSites, authRouter, settingsRouter, hasPassword, checkCurrentPassword };
 }
