@@ -1,7 +1,7 @@
 /**
  * The PowerShell script that shows the tray icon when tray.cs.mjs can't be compiled (see tray.mjs).
- * It's run with -EncodedCommand and
- * gets everything from environment variables, so nothing in it is ever quoted or substituted:
+ * It's given to PowerShell on stdin (-Command -) and gets everything from environment variables,
+ * so nothing in it is ever quoted or substituted:
  *
  *   EDJT_TRAY_TITLE       tooltip and notification title
  *   EDJT_TRAY_URL         the dashboard, opened by a left click and "Open Dashboard"
@@ -45,9 +45,9 @@ if ($env:EDJT_TRAY_LOG) {
   $logItem = $menu.Items.Add('Show Log')
   $logItem.add_Click({
     # A console window following the log; it reads the path from the environment it inherits.
+    # Plain text, as in tray.cs.mjs: no double quotes in it, so wrapped in them it's one argument.
     $command = '$host.UI.RawUI.WindowTitle = $env:EDJT_TRAY_TITLE + '' Log''; Get-Content -LiteralPath $env:EDJT_TRAY_LOG -Encoding UTF8 -Tail 200 -Wait'
-    $encoded = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($command))
-    Start-Process powershell.exe -ArgumentList @('-NoProfile', '-NoExit', '-EncodedCommand', $encoded)
+    Start-Process powershell.exe -ArgumentList ('-NoProfile -NoExit -Command "' + $command + '"')
   })
 }
 [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))

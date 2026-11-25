@@ -38,6 +38,14 @@ Downloads are on the [Releases](https://github.com/Agoknee/ed-journal-tool/relea
 
 The Windows `.exe` is standalone and can run from any directory. When launched, it will minimize to the system tray (unless disabled via CLI parameters).
 
+#### Windows: Smart App Control, SmartScreen and antivirus
+
+The `.exe` isn't code-signed yet, and that affects Windows in three ways:
+
+- **Smart App Control** (Windows 11, on some PCs that started from a clean install) blocks it, and there's no "run anyway" and no way to allow one app. You can check under Windows Security → App & browser control → Smart App Control. If it's **On**, EDJT won't start unless you turn Smart App Control off. On older Windows 11 builds you can't turn it back on without reinstalling Windows. Running from source (`npm start`) works, because Node.js is signed, but the tray icon may still be blocked. When that happens the dashboard opens in the browser instead. If Smart App Control is in **Evaluation** mode, it may switch itself on or off based on the apps you run.
+- **SmartScreen** may say "Windows protected your PC" the first time you run a downloaded copy. Click *More info* → *Run anyway*.
+- **Antivirus** programs sometimes report it, usually with a generic or "machine learning" result. A few antivirus engines often flag any executable made with [pkg](https://github.com/yao-pkg/pkg), since it carries a whole Node.js inside. The tray icon is a small program EDJT builds on your PC the first time it runs (`%LOCALAPPDATA%\edjt\tray\edjt-tray.exe`, see `src/windows/tray.cs.mjs`). You can check a download against its release's checksum and [provenance attestation](#releases) to confirm it was built from this repository.
+
 The Linux installer `.sh` is a self-extracting shell script, which will install the application for the current user and add it to the launch menu.
 - If the installer is run with the `--service` parameter, the application will be installed as a user service. Running the application from the launch menu will open the web interface.
   - Running as a service is needed on Steam Deck, to allow it to continue running in both Game and Desktop modes.

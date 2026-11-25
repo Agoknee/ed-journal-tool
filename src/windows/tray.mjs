@@ -81,6 +81,7 @@ async function trayProgram(iconPath) {
 export async function startTrayIcon({ title, dashboardUrl, logPath = null, iconPath = '', notification = null, onQuit, onFailure = () => {} }) {
   let command;
   let args;
+  let script = null;
   let shownIconPath = iconPath;
   try {
     const program = await trayProgram(iconPath);
@@ -89,13 +90,18 @@ export async function startTrayIcon({ title, dashboardUrl, logPath = null, iconP
     shownIconPath = program.iconPath;
   } catch (error) {
     logger.debug(`Couldn't compile the tray icon program, so PowerShell shows it: ${error.message.trim().split('\n')[0]}`);
+    // The script goes in on stdin rather than with -EncodedCommand, which antivirus treats as
+    // suspicious. PowerShell runs stdin a statement at a time, so it's wrapped in one block (ended
+    // by the blank line): otherwise $ErrorActionPreference = 'Stop' wouldn't stop the lines after
+    // a failure. No -ExecutionPolicy: it only applies to script files.
     command = POWERSHELL_PATH;
-    args = ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-EncodedCommand', Buffer.from(TRAY_SCRIPT, 'utf16le').toString('base64')];
+    args = ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', '-'];
+    script = `& {\n${TRAY_SCRIPT}\n}\n\n`;
   }
 
   const trayProcess = spawn(command, args, {
     windowsHide: true,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: [script === null ? 'ignore' : 'pipe', 'pipe', 'pipe'],
     env: {
       ...process.env,
       EDJT_TRAY_TITLE: title,
@@ -107,6 +113,11 @@ export async function startTrayIcon({ title, dashboardUrl, logPath = null, iconP
       EDJT_TRAY_NOTIFY: notification ?? '',
     },
   });
+
+  if (script !== null) {
+    trayProcess.stdin.on('error', () => {}); // a PowerShell that didn't start: reported by 'error' below
+    trayProcess.stdin.end(script);
+  }
 
   let hasQuit = false;
   let errorOutput = '';

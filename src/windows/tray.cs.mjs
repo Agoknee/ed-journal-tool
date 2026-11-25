@@ -13,7 +13,6 @@ using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Reflection;
-using System.Text;
 using System.Windows.Forms;
 
 [assembly: AssemblyTitle("ED Journal Tool")]
@@ -38,9 +37,10 @@ static class EdjtTray {
 
   static void ShowLog() {
     // A console window following the log; it reads the path from the environment it inherits.
+    // Passed as plain text, not -EncodedCommand (which antivirus treats as suspicious): it has no
+    // double quotes, so wrapped in them it arrives as one argument, and nothing in it is substituted.
     string command = "$host.UI.RawUI.WindowTitle = $env:EDJT_TRAY_TITLE + ' Log'; Get-Content -LiteralPath $env:EDJT_TRAY_LOG -Encoding UTF8 -Tail 200 -Wait";
-    string encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(command));
-    try { Process.Start("powershell.exe", "-NoProfile -NoExit -EncodedCommand " + encoded); } catch (Exception) { }
+    try { Process.Start("powershell.exe", "-NoProfile -NoExit -Command \"" + command + "\""); } catch (Exception) { }
   }
 
   static void RemoveIcon() {
