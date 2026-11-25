@@ -118,6 +118,22 @@ export class JournalMonitor {
     return added;
   }
 
+  /**
+   * For journal folders that weren't there and now are (a -j folder created after starting, a
+   * synced folder back): the file watcher doesn't notice a folder appearing where there was none,
+   * so it's pointed at them again, and they're read.
+   */
+  async rewatchDirectories(directories) {
+    if (directories.length === 0) return;
+    if (this.watcher) {
+      await this.watcher.unwatch(directories);
+      this.watcher.add(directories);
+    }
+    logger.info(`Journal ${directories.length === 1 ? 'folder' : 'folders'} now there: ${directories.map((directory) => `"${directory}"`).join(', ')}; reading ${directories.length === 1 ? 'it' : 'them'}.`);
+    await this.scanJournalDirectory();
+    this.eventHub.publish('journals', { reason: 'folders-back' });
+  }
+
   async stop() {
     for (const timer of this.timers) clearInterval(timer);
     for (const timer of this.debounceTimers.values()) clearTimeout(timer);
