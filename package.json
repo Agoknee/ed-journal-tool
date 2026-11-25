@@ -34,7 +34,7 @@
     "yargs": "^18.2.0"
   },
   "devDependencies": {
-    "@yao-pkg/pkg": "^6.25.0",
+    "@yao-pkg/pkg": "^6.26.0",
     "@yao-pkg/pkg-fetch": "^3.6.7",
     "esbuild": "^0.28.2",
     "resedit": "^3.1.1"
