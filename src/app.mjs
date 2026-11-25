@@ -122,12 +122,14 @@ export async function startApp() {
   }
 
   let journalSearchTimer = null;
+  let missingFolderTimer = null;
   let isShuttingDown = false;
   async function shutDown() {
     if (isShuttingDown) return;
     isShuttingDown = true;
     logger.info('Shutting down...');
     clearInterval(journalSearchTimer);
+    clearInterval(missingFolderTimer);
     await journalMonitor.stop();
     clockMonitor.stop();
     tickMonitor.stop();
@@ -189,6 +191,35 @@ export async function startApp() {
   if (journalSearch.status) {
     journalSearchTimer = watchForJournalFolders({ options, journalSearch, journalMonitor, statusMonitor, eventHub });
   }
+  missingFolderTimer = watchForReturningFolders(journalMonitor);
+}
+
+/**
+ * Every minute, notices journal folders that weren't there and now are: a -j folder missing at
+ * startup (while another was there), or a synced or network folder back after being unavailable.
+ * They stay in the list meanwhile (unreadable, so their stored journals aren't marked missing);
+ * the file watcher just doesn't notice a folder appearing, so it's pointed at them again. Cheap
+ * (it only checks the folders exist), so it runs for as long as the app does. Skipped while the
+ * journals are being scanned or a database reset has the watcher paused.
+ */
+function watchForReturningFolders(journalMonitor) {
+  const directories = journalMonitor.ingester.journalDirectories;
+  let missing = new Set(directories.filter((directory) => !existsSync(directory)));
+  let isChecking = false;
+  return setInterval(async () => {
+    if (isChecking || journalMonitor.isPaused || journalMonitor.scanProgress.isScanning) return;
+    isChecking = true;
+    try {
+      const nowMissing = new Set(directories.filter((directory) => !existsSync(directory)));
+      const back = [...missing].filter((directory) => !nowMissing.has(directory));
+      missing = nowMissing;
+      await journalMonitor.rewatchDirectories(back);
+    } catch (error) {
+      logger.error('Reading a journal folder that came back failed:', error);
+    } finally {
+      isChecking = false;
+    }
+  }, JOURNAL_SEARCH_INTERVAL_MS);
 }
 
 /**
